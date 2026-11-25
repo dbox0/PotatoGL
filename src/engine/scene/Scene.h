@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scene/Components.h"
+#include "engine/scene/Components.h"
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>

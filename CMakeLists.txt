@@ -75,41 +75,42 @@ set(WARNING_FLAGS "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,
 
 # Everything except the editor; must never link imgui
 add_library(engine STATIC
-        src/app/App.cpp
-        src/app/App.h
-        src/app/CameraController.cpp
-        src/app/CameraController.h
-        src/app/Overlay.h
-        src/assets/FbxLoader.cpp
-        src/assets/FbxLoader.h
-        src/assets/GltfLoader.cpp
-        src/assets/GltfLoader.h
-        src/assets/Image.cpp
-        src/assets/Image.h
-        src/assets/Model.cpp
-        src/assets/Model.h
-        src/core/Paths.cpp
-        src/core/Paths.h
-        src/gfx/DrawCommand.h
-        src/gfx/DrawData.h
-        src/gfx/GeometryBuffer.cpp
-        src/gfx/GeometryBuffer.h
-        src/gfx/IndirectBuffer.cpp
-        src/gfx/IndirectBuffer.h
-        src/gfx/Shader.cpp
-        src/gfx/Shader.h
-        src/gfx/TextureArray.cpp
-        src/gfx/TextureArray.h
-        src/gfx/Vertex.h
-        src/render/Renderer.cpp
-        src/render/Renderer.h
-        src/scene/Camera.cpp
-        src/scene/Camera.h
-        src/scene/Components.h
-        src/scene/Scene.cpp
-        src/scene/Scene.h
-        src/scene/Transform.cpp
-        src/scene/Transform.h)
+        src/engine/app/App.cpp
+        src/engine/app/App.h
+        src/engine/app/CameraController.cpp
+        src/engine/app/CameraController.h
+        src/engine/app/Game.h
+        src/engine/app/Overlay.h
+        src/engine/assets/FbxLoader.cpp
+        src/engine/assets/FbxLoader.h
+        src/engine/assets/GltfLoader.cpp
+        src/engine/assets/GltfLoader.h
+        src/engine/assets/Image.cpp
+        src/engine/assets/Image.h
+        src/engine/assets/Model.cpp
+        src/engine/assets/Model.h
+        src/engine/core/Paths.cpp
+        src/engine/core/Paths.h
+        src/engine/gfx/DrawCommand.h
+        src/engine/gfx/DrawData.h
+        src/engine/gfx/GeometryBuffer.cpp
+        src/engine/gfx/GeometryBuffer.h
+        src/engine/gfx/IndirectBuffer.cpp
+        src/engine/gfx/IndirectBuffer.h
+        src/engine/gfx/Shader.cpp
+        src/engine/gfx/Shader.h
+        src/engine/gfx/TextureArray.cpp
+        src/engine/gfx/TextureArray.h
+        src/engine/gfx/Vertex.h
+        src/engine/render/Renderer.cpp
+        src/engine/render/Renderer.h
+        src/engine/scene/Camera.cpp
+        src/engine/scene/Camera.h
+        src/engine/scene/Components.h
+        src/engine/scene/Scene.cpp
+        src/engine/scene/Scene.h
+        src/engine/scene/Transform.cpp
+        src/engine/scene/Transform.h)
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image)
 target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
@@ -139,8 +140,18 @@ if(BUILD_EDITOR)
     target_compile_options(editor PRIVATE ${WARNING_FLAGS})
 endif()
 
+# Gameplay; links engine, never imgui
+add_library(game STATIC
+        src/game/Components.h
+        src/game/Gameplay.cpp
+        src/game/Gameplay.h
+        src/game/Systems.cpp
+        src/game/Systems.h)
+target_link_libraries(game PUBLIC engine)
+target_compile_options(game PRIVATE ${WARNING_FLAGS})
+
 add_executable(${PROJECT_NAME} src/main.cpp)
-target_link_libraries(${PROJECT_NAME} PRIVATE engine)
+target_link_libraries(${PROJECT_NAME} PRIVATE engine game)
 if(BUILD_EDITOR)
     target_link_libraries(${PROJECT_NAME} PRIVATE editor)
     target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_EDITOR)

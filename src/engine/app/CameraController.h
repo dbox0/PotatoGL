@@ -3,7 +3,7 @@
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_video.h>
 
-#include "scene/Camera.h"
+#include "engine/scene/Camera.h"
 
 class CameraController
 {

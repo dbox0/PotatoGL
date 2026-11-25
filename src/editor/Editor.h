@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/Overlay.h"
+#include "engine/app/Overlay.h"
 #include "editor/DebugPanel.h"
 #include "editor/SceneHierarchyPanel.h"
 

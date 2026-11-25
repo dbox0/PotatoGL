@@ -1,12 +1,12 @@
 #pragma once
 
-#include "assets/Model.h"
-#include "gfx/DrawData.h"
-#include "gfx/GeometryBuffer.h"
-#include "gfx/IndirectBuffer.h"
-#include "gfx/Shader.h"
-#include "gfx/TextureArray.h"
-#include "scene/Camera.h"
+#include "engine/assets/Model.h"
+#include "engine/gfx/DrawData.h"
+#include "engine/gfx/GeometryBuffer.h"
+#include "engine/gfx/IndirectBuffer.h"
+#include "engine/gfx/Shader.h"
+#include "engine/gfx/TextureArray.h"
+#include "engine/scene/Camera.h"
 
 #include <chrono>
 #include <cstdint>

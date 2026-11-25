@@ -1,6 +1,6 @@
 #include "Renderer.h"
 
-#include "core/Paths.h"
+#include "engine/core/Paths.h"
 
 #include <algorithm>
 #include <cstdio>

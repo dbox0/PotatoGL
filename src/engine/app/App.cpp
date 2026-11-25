@@ -1,14 +1,9 @@
 #include "App.h"
 
-#include "assets/Model.h"
-#include "core/Paths.h"
-#include "scene/Transform.h"
 
 #include <glad/gl.h>
-#include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdio>
-#include <string>
 
 #ifndef NDEBUG
 static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum severity,
@@ -22,6 +17,9 @@ static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum sev
 
 App::~App()
 {
+    if (m_game && m_renderer)
+        m_game->shutdown(gameContext());
+    m_game.reset();
     if (m_overlay)
         m_overlay->shutdown();  // GL objects must die before the context
     m_renderer.reset();
@@ -87,42 +85,8 @@ bool App::init(const char* title, int width, int height)
     SDL_GetWindowSizeInPixels(m_window, &fbWidth, &fbHeight);
     onResize(fbWidth, fbHeight);
 
-    return buildDemoScene();
-}
-
-bool App::buildDemoScene()
-{
-    std::optional<ModelData> duck = loadModel(resourcePath("assets/Duck.glb"));
-    if (!duck)
+    if (m_game && !m_game->init(gameContext()))
         return false;
-    const ModelId duckModel = m_renderer->addModel(*duck);
-
-    const entt::entity ducks = m_scene.createGameObject("Ducks");
-    entt::registry& registry = m_scene.registry();
-
-    constexpr int gridSize = 10;
-    constexpr float spacing = 2.5f;
-    for (int z = 0; z < gridSize; ++z) {
-        for (int x = 0; x < gridSize; ++x) {
-            const glm::vec3 pos((x - (gridSize - 1) * 0.5f) * spacing, 0.0f, (z - (gridSize - 1) * 0.5f) * spacing);
-            const float yaw = glm::radians(static_cast<float>((x * 37 + z * 61) % 360));
-            const entt::entity duck = m_scene.createGameObject("Duck " + std::to_string(z * gridSize + x), ducks);
-            Transform& transform = registry.get<Transform>(duck);
-            transform.setPos(pos);
-            transform.rotate(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-            registry.emplace<MeshRenderer>(duck, duckModel);
-
-            if (x == 0 && z == 0) {
-                const entt::entity duckling = m_scene.createGameObject("Duckling", duck);
-                registry.get<Transform>(duckling).setPos({0.0f, 1.5f, 0.0f});
-                registry.get<Transform>(duckling).setScale(glm::vec3(0.5f));
-                registry.emplace<MeshRenderer>(duckling, duckModel);
-            }
-        }
-    }
-
-    m_camera.getTransform().setPos({0.0f, 12.0f, 22.0f});
-    m_camera.getTransform().lookAt({0.0f, 0.0f, 0.0f});
     m_controller.syncFrom(m_camera);
     return true;
 }
@@ -178,6 +142,9 @@ void App::run()
         m_controller.setKeyboardEnabled(!(m_overlay && m_overlay->wantsKeyboard()));
         m_controller.update(dt, m_camera);
         m_renderer->pollShaderChanges();
+
+        if (m_game)
+            m_game->update(gameContext(), dt);
 
         m_scene.updateWorldTransforms();
         syncRenderInstances();

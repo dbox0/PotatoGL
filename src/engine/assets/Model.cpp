@@ -1,7 +1,7 @@
 #include "Model.h"
 
-#include "assets/FbxLoader.h"
-#include "assets/GltfLoader.h"
+#include "engine/assets/FbxLoader.h"
+#include "engine/assets/GltfLoader.h"
 
 #include <algorithm>
 #include <cctype>

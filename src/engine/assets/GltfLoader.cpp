@@ -1,6 +1,6 @@
 #include "GltfLoader.h"
 
-#include "core/Paths.h"
+#include "engine/core/Paths.h"
 
 #include <cgltf.h>
 #include <glm/gtc/type_ptr.hpp>

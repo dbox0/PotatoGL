@@ -1,7 +1,7 @@
 #pragma once
 
-#include "assets/Image.h"
-#include "gfx/Vertex.h"
+#include "engine/assets/Image.h"
+#include "engine/gfx/Vertex.h"
 
 #include <cstdint>
 #include <optional>

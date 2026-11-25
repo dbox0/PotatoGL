@@ -1,9 +1,9 @@
 #include "DebugPanel.h"
 
-#include "app/CameraController.h"
-#include "app/Overlay.h"
-#include "render/Renderer.h"
-#include "scene/Camera.h"
+#include "engine/app/CameraController.h"
+#include "engine/app/Overlay.h"
+#include "engine/render/Renderer.h"
+#include "engine/scene/Camera.h"
 
 #include <glad/gl.h>
 #include <imgui.h>

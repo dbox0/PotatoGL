@@ -1,6 +1,6 @@
 #include "FbxLoader.h"
 
-#include "core/Paths.h"
+#include "engine/core/Paths.h"
 
 #include <ufbx.h>
 
