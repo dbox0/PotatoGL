@@ -17,9 +17,13 @@ private:
 
 
 public:
+    // Rigid inverse: ignores the transform's scale
     glm::mat4 getView() const
     {
-        return glm::inverse(m_transform.getMatrix());
+        const glm::mat3 invRot = glm::mat3_cast(glm::conjugate(m_transform.getRot()));
+        glm::mat4 view(invRot);
+        view[3] = glm::vec4(-(invRot * m_transform.getPos()), 1.0f);
+        return view;
     }
 
     glm::mat4 getProjection() const;

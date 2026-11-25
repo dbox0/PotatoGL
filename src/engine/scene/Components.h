@@ -23,6 +23,7 @@ struct Relationship
 {
     entt::entity parent = entt::null;
     entt::entity firstChild = entt::null;
+    entt::entity lastChild = entt::null;
     entt::entity prevSibling = entt::null;
     entt::entity nextSibling = entt::null;
     std::size_t childCount = 0;

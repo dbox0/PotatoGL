@@ -56,6 +56,15 @@ FetchContent_Declare(EnTT
 
 FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb EnTT)
 
+# LTO for optimized builds, so script hooks inline into the runner's loops across files.
+# Set after the dependencies so only targets defined below get it.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR LANGUAGES C CXX)
+if(IPO_SUPPORTED)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELEASE ON)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO ON)
+endif()
+
 # glad 2.0.8, GL 4.3 core, no extensions. Regenerate with:
 #   python -m glad --api "gl:core=4.3" --extensions "" --reproducible --out-path src/third_party/glad c
 add_library(glad STATIC src/third_party/glad/src/gl.c)
@@ -89,6 +98,8 @@ add_library(engine STATIC
         src/engine/assets/Image.h
         src/engine/assets/Model.cpp
         src/engine/assets/Model.h
+        src/engine/core/InplaceFunction.h
+        src/engine/core/Input.h
         src/engine/core/Paths.cpp
         src/engine/core/Paths.h
         src/engine/reflect/ComponentRegistry.h
@@ -115,6 +126,7 @@ add_library(engine STATIC
         src/engine/scene/Transform.cpp
         src/engine/scene/Transform.h
         src/engine/script/ScriptContext.h
+        src/engine/script/ScriptRegistry.h
         src/engine/script/ScriptRunner.cpp
         src/engine/script/ScriptRunner.h)
 target_include_directories(engine PUBLIC src)
@@ -149,18 +161,10 @@ if(BUILD_EDITOR)
     target_compile_options(editor PRIVATE ${WARNING_FLAGS})
 endif()
 
-# Gameplay; links engine, never imgui
-add_library(game STATIC
-        src/game/Components.cpp
-        src/game/Components.h
-        src/game/Gameplay.cpp
-        src/game/Gameplay.h
-        src/game/Systems.cpp
-        src/game/Systems.h
-        src/game/scripts/Register.cpp
-        src/game/scripts/Register.h
-        src/game/scripts/Rotator.cpp
-        src/game/scripts/Rotator.h)
+# Gameplay; links engine, never imgui. OBJECT so REGISTER_SCRIPT registrars aren't
+# dropped by the linker; new files are picked up on the next build.
+file(GLOB_RECURSE GAME_SOURCES CONFIGURE_DEPENDS src/game/*.cpp src/game/*.h)
+add_library(game OBJECT ${GAME_SOURCES})
 target_link_libraries(game PUBLIC engine)
 target_compile_options(game PRIVATE ${WARNING_FLAGS})
 

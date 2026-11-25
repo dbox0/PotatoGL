@@ -2,7 +2,6 @@
 
 #include "game/Components.h"
 #include "game/Systems.h"
-#include "game/scripts/Register.h"
 #include "game/scripts/Rotator.h"
 
 #include "engine/assets/Model.h"
@@ -23,7 +22,7 @@ bool Gameplay::init(const GameContext& context)
 
     registerGameComponents(context.components);
     m_scripts = std::make_unique<ScriptRunner>(scene, context.components);
-    registerScripts(*m_scripts);
+    m_scripts->registerAll();
 
     std::optional<ModelData> duck = loadModel(resourcePath("assets/Duck.glb"));
     if (!duck)

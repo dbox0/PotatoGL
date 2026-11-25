@@ -34,4 +34,5 @@ public:
     GLint uniformLocation(const char* name) const;
     void setInt(const char* name, int value) const;
     void setMat4(const char* name, const glm::mat4& value) const;
+    static void setMat4(GLint location, const glm::mat4& value);
 };

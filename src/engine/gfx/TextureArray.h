@@ -29,7 +29,7 @@ public:
     // sRGB RGBA8 pixels, any size (scaled on the GPU if it differs). Returns the layer.
     GLuint addLayer(GLsizei width, GLsizei height, const unsigned char* rgba);
 
-    // Call once after adding layers
+    // Whole array; Renderer calls it once per frame that added layers
     void generateMipmaps() const;
 
     void bind(GLuint unit) const;

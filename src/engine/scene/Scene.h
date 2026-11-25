@@ -1,21 +1,25 @@
 #pragma once
 
+#include "engine/core/InplaceFunction.h"
 #include "engine/scene/Components.h"
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
-#include <functional>
 #include <string>
 #include <vector>
 
 // Owns the registry and the hierarchy. Top-level objects are children of a hidden root.
 class Scene
 {
+public:
+    using Deferred = InplaceFunction<void(Scene&)>;
+
 private:
     entt::registry m_registry;
     entt::entity m_root = entt::null;
-    std::vector<std::function<void(Scene&)>> m_deferred;
+    std::vector<Deferred> m_deferred;
+    std::vector<Deferred> m_flushing;  // kept around so neither vector reallocates every frame
 
     void link(entt::entity e, entt::entity parent);
     void unlink(entt::entity e);
@@ -46,7 +50,8 @@ public:
     void updateWorldTransforms();
 
     // For structural changes that aren't safe mid-iteration (spawning, reparenting)
-    void defer(std::function<void(Scene&)> fn) { m_deferred.push_back(std::move(fn)); }
+    template<typename F>
+    void defer(F&& fn) { m_deferred.emplace_back(std::forward<F>(fn)); }
     void flushDeferred();
 
     template<typename Fn>

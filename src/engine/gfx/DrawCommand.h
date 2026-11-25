@@ -9,7 +9,7 @@ struct DrawElementsIndirectCommand
     GLuint instanceCount;
     GLuint firstIndex;
     GLint  baseVertex;
-    GLuint baseInstance;  // draw index, read back as the drawId attribute
+    GLuint baseInstance;  // first instance slot, read back via the drawId attribute
 };
 static_assert(sizeof(DrawElementsIndirectCommand) == 20);
 

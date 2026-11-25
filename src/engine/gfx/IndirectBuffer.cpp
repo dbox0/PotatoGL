@@ -21,14 +21,14 @@ void IndirectBuffer::clear()
     m_commands.clear();
 }
 
-void IndirectBuffer::add(const MeshRange& mesh)
+void IndirectBuffer::add(const MeshRange& mesh, GLuint instanceCount, GLuint baseInstance)
 {
     DrawElementsIndirectCommand cmd;
     cmd.count = mesh.indexCount;
-    cmd.instanceCount = 1;
+    cmd.instanceCount = instanceCount;
     cmd.firstIndex = mesh.firstIndex;
     cmd.baseVertex = mesh.baseVertex;
-    cmd.baseInstance = static_cast<GLuint>(m_commands.size());
+    cmd.baseInstance = baseInstance;
     m_commands.push_back(cmd);
 }
 

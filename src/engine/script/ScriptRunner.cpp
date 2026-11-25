@@ -1,13 +1,29 @@
 #include "ScriptRunner.h"
 
+#include "engine/script/ScriptRegistry.h"
+
+#include <algorithm>
+
 ScriptRunner::~ScriptRunner()
 {
     for (auto& entry : m_entries)
         entry->disconnect(m_scene.registry(), *entry);
 }
 
+void ScriptRunner::registerAll()
+{
+    std::vector<ScriptRegistration> registrations = scriptRegistrations();
+    std::sort(registrations.begin(), registrations.end(),
+              [](const ScriptRegistration& a, const ScriptRegistration& b) { return a.name < b.name; });
+    for (const ScriptRegistration& r : registrations)
+        r.add(*this);
+}
+
 void ScriptRunner::runStarts()
 {
+    if (!m_anyPendingStart)
+        return;
+    m_anyPendingStart = false;
     for (auto& entry : m_entries) {
         if (entry->pendingStart.empty())
             continue;

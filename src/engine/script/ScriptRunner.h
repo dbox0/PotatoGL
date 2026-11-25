@@ -19,6 +19,9 @@
 //   void onFixedUpdate(ScriptContext&, float);  every fixed step
 //   void onLateUpdate(ScriptContext&, float);   after all updates
 //   void onDestroy(ScriptContext&);             when removed or its entity is destroyed
+// Optional statics:
+//   static constexpr int order = 0;              lower runs first
+//   static void fields(ComponentInfo&);          inspector fields
 
 template<typename T>
 concept HasOnCreate = requires(T& t, ScriptContext& c) { t.onCreate(c); };
@@ -32,6 +35,17 @@ template<typename T>
 concept HasOnFixedUpdate = requires(T& t, ScriptContext& c, float dt) { t.onFixedUpdate(c, dt); };
 template<typename T>
 concept HasOnLateUpdate = requires(T& t, ScriptContext& c, float dt) { t.onLateUpdate(c, dt); };
+template<typename T>
+concept HasFields = requires(ComponentInfo& info) { T::fields(info); };
+
+template<typename T>
+constexpr int scriptOrder()
+{
+    if constexpr (requires { T::order; })
+        return T::order;
+    else
+        return 0;
+}
 
 // One loop per script type per hook: contiguous storage, direct (inlinable) calls.
 // A type without a hook gets no loop for it.
@@ -50,11 +64,13 @@ private:
         void (*start)(Scene&, entt::entity) = nullptr;
         void (*disconnect)(entt::registry&, Entry&) = nullptr;
         std::vector<entt::entity> pendingStart;
+        bool* anyPendingStart = nullptr;
     };
 
     Scene& m_scene;
     ComponentRegistry& m_components;
     std::vector<std::unique_ptr<Entry>> m_entries;  // sorted by order; signals point into them
+    bool m_anyPendingStart = false;
 
     template<typename T>
     static void onConstruct(Entry& entry, entt::registry& registry, entt::entity e)
@@ -63,8 +79,10 @@ private:
             ScriptContext ctx{*entry.scene, e};
             registry.get<T>(e).onCreate(ctx);
         }
-        if constexpr (HasOnStart<T>)
+        if constexpr (HasOnStart<T>) {
             entry.pendingStart.push_back(e);
+            *entry.anyPendingStart = true;
+        }
     }
 
     template<typename T>
@@ -84,9 +102,12 @@ public:
     ScriptRunner(const ScriptRunner&) = delete;
     ScriptRunner& operator=(const ScriptRunner&) = delete;
 
-    // Lower order runs first. Returns the reflection entry so fields can be chained on.
+    // Lower order runs first. Returns the reflection entry so more fields can be chained on.
     template<typename T>
-    ComponentInfo& add(std::string name, int order = 0);
+    ComponentInfo& add(std::string name, int order = scriptOrder<T>());
+
+    // Adds every REGISTER_SCRIPT type, sorted by name so the editor lists them stably
+    void registerAll();
 
     void update(float dt)      { run(&Entry::update, dt); }
     void fixedUpdate(float dt) { run(&Entry::fixedUpdate, dt); }
@@ -101,27 +122,31 @@ ComponentInfo& ScriptRunner::add(std::string name, int order)
     auto entry = std::make_unique<Entry>();
     entry->scene = &m_scene;
     entry->order = order;
+    entry->anyPendingStart = &m_anyPendingStart;
 
     if constexpr (HasOnUpdate<T>) {
         entry->update = [](Scene& scene, float dt) {
+            auto& transforms = scene.registry().storage<Transform>();
             for (auto [e, script] : scene.registry().view<T>(entt::exclude<Disabled>).each()) {
-                ScriptContext ctx{scene, e};
+                ScriptContext ctx{scene, e, &transforms};
                 script.onUpdate(ctx, dt);
             }
         };
     }
     if constexpr (HasOnFixedUpdate<T>) {
         entry->fixedUpdate = [](Scene& scene, float dt) {
+            auto& transforms = scene.registry().storage<Transform>();
             for (auto [e, script] : scene.registry().view<T>(entt::exclude<Disabled>).each()) {
-                ScriptContext ctx{scene, e};
+                ScriptContext ctx{scene, e, &transforms};
                 script.onFixedUpdate(ctx, dt);
             }
         };
     }
     if constexpr (HasOnLateUpdate<T>) {
         entry->lateUpdate = [](Scene& scene, float dt) {
+            auto& transforms = scene.registry().storage<Transform>();
             for (auto [e, script] : scene.registry().view<T>(entt::exclude<Disabled>).each()) {
-                ScriptContext ctx{scene, e};
+                ScriptContext ctx{scene, e, &transforms};
                 script.onLateUpdate(ctx, dt);
             }
         };
@@ -153,5 +178,7 @@ ComponentInfo& ScriptRunner::add(std::string name, int order)
 
     ComponentInfo& info = m_components.add<T>(std::move(name));
     info.isScript = true;
+    if constexpr (HasFields<T>)
+        T::fields(info);
     return info;
 }

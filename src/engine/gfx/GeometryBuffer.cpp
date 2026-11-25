@@ -1,6 +1,9 @@
 #include "GeometryBuffer.h"
 
+#include <glm/gtc/packing.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <numeric>
 #include <vector>
@@ -30,10 +33,26 @@ static GLuint grownCopy(GLuint old, GLsizeiptr usedBytes, GLsizeiptr newBytes)
     return buffer;
 }
 
-static void vertexAttrib(GLuint location, GLint size, std::size_t offset)
+static void vertexAttrib(GLuint location, GLint size, GLenum type, GLboolean normalized, std::size_t offset)
 {
     glEnableVertexAttribArray(location);
-    glVertexAttribPointer(location, size, GL_FLOAT, GL_FALSE, sizeof(Vertex), reinterpret_cast<void*>(offset));
+    glVertexAttribPointer(location, size, type, normalized, sizeof(GpuVertex), reinterpret_cast<void*>(offset));
+}
+
+static std::uint32_t packSnorm10(float v)
+{
+    const auto i = static_cast<std::int32_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 511.0f));
+    return static_cast<std::uint32_t>(i) & 0x3FFu;
+}
+
+static GpuVertex packVertex(const Vertex& v)
+{
+    GpuVertex g;
+    g.position = v.position;
+    g.normal = packSnorm10(v.normal.x) | packSnorm10(v.normal.y) << 10 | packSnorm10(v.normal.z) << 20;
+    g.uv[0] = glm::packHalf1x16(v.uv.x);
+    g.uv[1] = glm::packHalf1x16(v.uv.y);
+    return g;
 }
 
 GeometryBuffer::GeometryBuffer(GLsizeiptr vertexCapacity, GLsizeiptr indexCapacity, GLsizeiptr drawCapacity)
@@ -45,7 +64,7 @@ GeometryBuffer::GeometryBuffer(GLsizeiptr vertexCapacity, GLsizeiptr indexCapaci
 
     glGenBuffers(1, &m_vbo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, m_vbo);
-    glBufferData(GL_COPY_WRITE_BUFFER, m_vertexCapacity * sizeof(Vertex), nullptr, GL_STATIC_DRAW);
+    glBufferData(GL_COPY_WRITE_BUFFER, m_vertexCapacity * sizeof(GpuVertex), nullptr, GL_STATIC_DRAW);
 
     glGenBuffers(1, &m_ebo);
     glBindBuffer(GL_COPY_WRITE_BUFFER, m_ebo);
@@ -68,9 +87,9 @@ void GeometryBuffer::attachVertexBuffer()
 {
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    vertexAttrib(0, 3, offsetof(Vertex, position));
-    vertexAttrib(1, 3, offsetof(Vertex, normal));
-    vertexAttrib(2, 2, offsetof(Vertex, uv));
+    vertexAttrib(0, 3, GL_FLOAT, GL_FALSE, offsetof(GpuVertex, position));
+    vertexAttrib(1, 4, GL_INT_2_10_10_10_REV, GL_TRUE, offsetof(GpuVertex, normal));
+    vertexAttrib(2, 2, GL_HALF_FLOAT, GL_FALSE, offsetof(GpuVertex, uv));
     glBindVertexArray(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
@@ -106,7 +125,7 @@ MeshRange GeometryBuffer::addMesh(std::span<const Vertex> vertices, std::span<co
 
     if (m_vertexCount + vertexCount > m_vertexCapacity) {
         const GLsizeiptr capacity = grownCapacity(m_vertexCapacity, m_vertexCount + vertexCount);
-        m_vbo = grownCopy(m_vbo, m_vertexCount * sizeof(Vertex), capacity * sizeof(Vertex));
+        m_vbo = grownCopy(m_vbo, m_vertexCount * sizeof(GpuVertex), capacity * sizeof(GpuVertex));
         m_vertexCapacity = capacity;
         attachVertexBuffer();
     }
@@ -117,9 +136,15 @@ MeshRange GeometryBuffer::addMesh(std::span<const Vertex> vertices, std::span<co
         attachIndexBuffer();
     }
 
+    std::vector<GpuVertex> packed;
+    packed.reserve(vertices.size());
+    for (const Vertex& v : vertices)
+        packed.push_back(packVertex(v));
+
     // COPY_WRITE avoids touching the ELEMENT_ARRAY binding of whatever VAO is bound
     glBindBuffer(GL_COPY_WRITE_BUFFER, m_vbo);
-    glBufferSubData(GL_COPY_WRITE_BUFFER, m_vertexCount * sizeof(Vertex), vertices.size_bytes(), vertices.data());
+    glBufferSubData(GL_COPY_WRITE_BUFFER, m_vertexCount * sizeof(GpuVertex), packed.size() * sizeof(GpuVertex),
+                    packed.data());
     glBindBuffer(GL_COPY_WRITE_BUFFER, m_ebo);
     glBufferSubData(GL_COPY_WRITE_BUFFER, m_indexCount * sizeof(std::uint32_t), indices.size_bytes(), indices.data());
     glBindBuffer(GL_COPY_WRITE_BUFFER, 0);

@@ -1,7 +1,5 @@
 #include "Transform.h"
 
-#include <glm/gtc/matrix_transform.hpp>
-
 void Transform::setPos(const glm::vec3& p)
 {
     m_pos = p;
@@ -24,9 +22,11 @@ void Transform::setEulerAngles(const glm::vec3& radians)
 
 glm::mat4 Transform::getMatrix() const
 {
-    glm::mat4 m = glm::translate(glm::mat4(1.0f), m_pos);
-    m *= glm::mat4_cast(m_rot);
-    return glm::scale(m, m_scale);
+    const glm::mat3 r = glm::mat3_cast(m_rot);
+    return glm::mat4(glm::vec4(r[0] * m_scale.x, 0.0f),
+                     glm::vec4(r[1] * m_scale.y, 0.0f),
+                     glm::vec4(r[2] * m_scale.z, 0.0f),
+                     glm::vec4(m_pos, 1.0f));
 }
 
 // OpenGL -Z forward, +X right, +Y up

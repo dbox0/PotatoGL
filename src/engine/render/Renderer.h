@@ -18,7 +18,8 @@ using ModelId = std::uint32_t;
 inline constexpr ModelId InvalidModel = UINT32_MAX;
 
 // Every mesh lives in one GeometryBuffer and every texture in one TextureArray,
-// so the whole scene is a single glMultiDrawElementsIndirect call.
+// so the whole scene is a single glMultiDrawElementsIndirect call with one
+// instanced command per submesh.
 class Renderer
 {
 public:
@@ -36,6 +37,7 @@ public:
     {
         GLsizeiptr vertices, vertexCapacity;
         GLsizeiptr indices, indexCapacity;
+        GLsizeiptr instances;
         GLsizeiptr draws, drawCapacity;
         GLsizei textureLayers, textureLayerCapacity, textureSize;
         std::size_t models;
@@ -55,13 +57,31 @@ private:
     GLuint m_drawSsbo = 0;
     GLsizeiptr m_drawSsboCapacity = 0;
 
-    std::vector<std::vector<Submesh>> m_models;
-    std::vector<DrawData> m_draws;
-    std::vector<MeshRange> m_drawRanges;
-    bool m_drawsDirty = false;
+    struct ModelEntry
+    {
+        std::uint32_t firstSubmesh;
+        std::uint32_t submeshCount;
+    };
 
+    std::vector<Submesh> m_submeshes;
+    std::vector<ModelEntry> m_models;
+
+    // Instances in submission order; uploadDraws groups them by submesh into m_draws
+    std::vector<std::uint32_t> m_instanceSubmesh;
+    std::vector<DrawData> m_instanceDraws;
+    std::vector<DrawData> m_draws;
+    std::vector<GLuint> m_groupStart;
+    std::vector<GLuint> m_groupCursor;
+    bool m_drawsDirty = false;
+    bool m_mipsDirty = true;
+
+    GLint m_viewProjLocation = -1;
     std::chrono::steady_clock::time_point m_lastShaderPoll;
+#ifdef NDEBUG
+    bool m_shaderAutoReload = false;
+#else
     bool m_shaderAutoReload = true;
+#endif
 
     explicit Renderer(const Config& config);
     void onShaderLoaded();

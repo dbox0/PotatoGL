@@ -2,6 +2,7 @@
 
 #include <glm/glm.hpp>
 
+struct ComponentInfo;
 struct ScriptContext;
 
 // Example script: spins its object around an axis in parent space
@@ -11,4 +12,5 @@ struct Rotator
     float degreesPerSec = 90.0f;
 
     void onUpdate(ScriptContext& ctx, float dt);
+    static void fields(ComponentInfo& info);
 };

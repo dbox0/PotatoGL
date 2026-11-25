@@ -22,15 +22,13 @@ void Scene::link(entt::entity e, entt::entity parent)
     rel.prevSibling = entt::null;
     rel.nextSibling = entt::null;
 
-    if (parentRel.firstChild == entt::null) {
+    if (parentRel.lastChild == entt::null) {
         parentRel.firstChild = e;
     } else {
-        entt::entity last = parentRel.firstChild;
-        while (m_registry.get<Relationship>(last).nextSibling != entt::null)
-            last = m_registry.get<Relationship>(last).nextSibling;
-        m_registry.get<Relationship>(last).nextSibling = e;
-        rel.prevSibling = last;
+        m_registry.get<Relationship>(parentRel.lastChild).nextSibling = e;
+        rel.prevSibling = parentRel.lastChild;
     }
+    parentRel.lastChild = e;
     ++parentRel.childCount;
 }
 
@@ -47,6 +45,8 @@ void Scene::unlink(entt::entity e)
         parentRel.firstChild = rel.nextSibling;
     if (rel.nextSibling != entt::null)
         m_registry.get<Relationship>(rel.nextSibling).prevSibling = rel.prevSibling;
+    else
+        parentRel.lastChild = rel.prevSibling;
     --parentRel.childCount;
 
     rel.parent = entt::null;
@@ -127,9 +127,9 @@ void Scene::flushDeferred()
 {
     // Deferred work may defer more; keep going until the queue settles
     while (!m_deferred.empty()) {
-        std::vector<std::function<void(Scene&)>> pending;
-        pending.swap(m_deferred);
-        for (auto& fn : pending)
+        m_flushing.swap(m_deferred);
+        for (Deferred& fn : m_flushing)
             fn(*this);
+        m_flushing.clear();
     }
 }

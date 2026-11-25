@@ -20,8 +20,9 @@ public:
     IndirectBuffer& operator=(const IndirectBuffer&) = delete;
 
     void clear();
-    void add(const MeshRange& mesh);  // baseInstance = command index
-    void upload();                    // grows the GPU buffer if needed
+    // baseInstance = first SSBO slot of the group; drawId = baseInstance + gl_InstanceID
+    void add(const MeshRange& mesh, GLuint instanceCount, GLuint baseInstance);
+    void upload();  // grows the GPU buffer if needed
 
     // Draws what was last uploaded; GeometryBuffer must be bound
     void draw() const;

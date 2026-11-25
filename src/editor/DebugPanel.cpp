@@ -55,7 +55,8 @@ void DebugPanel::draw(const OverlayContext& context)
 
         if (ImGui::CollapsingHeader("Renderer", ImGuiTreeNodeFlags_DefaultOpen)) {
             const Renderer::Stats s = renderer.stats();
-            ImGui::Text("%zu models, %lld draws in 1 call", s.models, static_cast<long long>(s.draws));
+            ImGui::Text("%zu models, %lld instances, %lld draws in 1 call", s.models,
+                        static_cast<long long>(s.instances), static_cast<long long>(s.draws));
             usageRow("Vertices", s.vertices, s.vertexCapacity);
             usageRow("Indices", s.indices, s.indexCapacity);
             usageRow("Draws", s.draws, s.drawCapacity);

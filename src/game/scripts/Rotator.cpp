@@ -1,6 +1,14 @@
 #include "Rotator.h"
 
-#include "engine/script/ScriptContext.h"
+#include "engine/script/ScriptRegistry.h"
+#include "engine/script/ScriptRunner.h"
+
+REGISTER_SCRIPT(Rotator);
+
+void Rotator::fields(ComponentInfo& info)
+{
+    info.field<&Rotator::axis>("Axis", 0.01f).field<&Rotator::degreesPerSec>("Degrees/sec", 1.0f);
+}
 
 void Rotator::onUpdate(ScriptContext& ctx, float dt)
 {

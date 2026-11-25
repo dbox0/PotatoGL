@@ -125,5 +125,10 @@ void Shader::setInt(const char* name, int value) const
 
 void Shader::setMat4(const char* name, const glm::mat4& value) const
 {
-    glUniformMatrix4fv(uniformLocation(name), 1, GL_FALSE, glm::value_ptr(value));
+    setMat4(uniformLocation(name), value);
+}
+
+void Shader::setMat4(GLint location, const glm::mat4& value)
+{
+    glUniformMatrix4fv(location, 1, GL_FALSE, glm::value_ptr(value));
 }

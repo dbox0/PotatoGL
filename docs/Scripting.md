@@ -21,6 +21,7 @@ class, no virtual functions.
 // src/game/scripts/Bobber.h
 #pragma once
 
+struct ComponentInfo;
 struct ScriptContext;
 
 struct Bobber
@@ -32,6 +33,7 @@ struct Bobber
 
     void onStart(ScriptContext& ctx);
     void onUpdate(ScriptContext& ctx, float dt);
+    static void fields(ComponentInfo& info);
 };
 ```
 
@@ -39,9 +41,17 @@ struct Bobber
 // src/game/scripts/Bobber.cpp
 #include "Bobber.h"
 
-#include "engine/script/ScriptContext.h"
+#include "engine/script/ScriptRegistry.h"
+#include "engine/script/ScriptRunner.h"
 
 #include <cmath>
+
+REGISTER_SCRIPT(Bobber);
+
+void Bobber::fields(ComponentInfo& info)
+{
+    info.field<&Bobber::height>("Height", 0.01f).field<&Bobber::speed>("Speed", 0.05f);
+}
 
 void Bobber::onStart(ScriptContext& ctx)
 {
@@ -57,20 +67,14 @@ void Bobber::onUpdate(ScriptContext& ctx, float dt)
 }
 ```
 
-Then register it in `src/game/scripts/Register.cpp` and add both files to the `game`
-library in `CMakeLists.txt`:
+That's all. `REGISTER_SCRIPT(Bobber)` registers the script at startup under its type
+name, and the `game` library globs `src/game/`, so new files are picked up on the next
+build without editing `CMakeLists.txt`. `game` is an `OBJECT` library on purpose: in a
+static library the linker would drop the registrar, since nothing references it.
 
-```cpp
-scripts.add<Bobber>("Bobber")
-    .field<&Bobber::height>("Height", 0.01f)
-    .field<&Bobber::speed>("Speed", 0.05f);
-```
-
-Fields listed with `.field<>()` show up in the inspector; the second argument is the
-drag speed. Unlisted members (`time`, `baseY` above) are internal state.
-
-Registration is an explicit list on purpose: self-registering static objects are
-silently dropped by the linker in static libraries.
+Fields listed in `fields()` show up in the inspector; the second argument is the drag
+speed. Unlisted members (`time`, `baseY` above) are internal state. `fields()` is
+optional.
 
 ## Hooks
 
@@ -87,8 +91,8 @@ All hooks are optional. A type without a hook gets no loop for it.
 
 Entities tagged `Disabled` are skipped by every update hook.
 
-Execution order between script types is set at registration: `scripts.add<T>(name, order)`,
-lower runs first, default 0.
+Execution order between script types comes from an optional `static constexpr int order`
+on the struct, lower runs first, default 0. Types with the same order run by name.
 
 ## ScriptContext
 
@@ -100,9 +104,10 @@ Every hook gets a `ScriptContext` for its own entity:
 | `ctx.tryGet<T>()` | Pointer, `nullptr` if missing |
 | `ctx.has<T>()` | Whether this entity has `T` |
 | `ctx.add<T>(args...)` | Add or replace a component on this entity |
-| `ctx.transform()` | Shortcut for `get<Transform>()` (local transform) |
+| `ctx.transform()` | Local transform; looked up once per hook, then cached |
+| `ctx.input()` | Keyboard state: `isKeyDown(SDL_SCANCODE_...)`; reports nothing while the editor has keyboard focus |
 | `ctx.destroy()` | Tags the entity `Dead`; destroyed with its children at the end of the fixed step |
-| `ctx.defer(fn)` | Runs `fn(Scene&)` after the current hook phase |
+| `ctx.defer(fn)` | Runs `fn(Scene&)` after the current hook phase; captures must fit 64 bytes (no heap allocation) |
 | `ctx.scene`, `ctx.self`, `ctx.registry()` | Full access when needed |
 
 Refer to other entities by `entt::entity`, never by pointer, and check
