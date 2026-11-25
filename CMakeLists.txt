@@ -63,7 +63,12 @@ add_executable(renderer src/main.cpp
         src/gfx/IndirectBuffer.cpp
         src/gfx/IndirectBuffer.h
         src/assets/GltfLoader.cpp
-        src/assets/GltfLoader.h)
+        src/assets/GltfLoader.h
+        src/assets/Image.cpp
+        src/assets/Image.h
+        src/gfx/DrawData.h
+        src/gfx/TextureArray.cpp
+        src/gfx/TextureArray.h)
 target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx stb_image SDL3::SDL3 glm::glm OpenGL::GL)
 target_compile_definitions(renderer PRIVATE
         SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"

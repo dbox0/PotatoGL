@@ -2,8 +2,10 @@
 #include <SDL3/SDL.h>
 
 #include "assets/GltfLoader.h"
+#include "gfx/DrawData.h"
 #include "gfx/GeometryBuffer.h"
 #include "gfx/IndirectBuffer.h"
+#include "gfx/TextureArray.h"
 #include "scene/Camera.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -130,28 +132,40 @@ int main() {
         GeometryBuffer geometry(1 << 16, 1 << 18, drawCount);
         IndirectBuffer indirect(drawCount);
 
+        TextureArray textures(512, 512, 32);
+
         const MeshRange duckRange = geometry.addMesh(duck->vertices, duck->indices);
-        std::vector<glm::mat4> models;
-        models.reserve(drawCount);
+        const GLuint duckLayer = duck->baseColor
+            ? textures.addLayer(duck->baseColor->width, duck->baseColor->height, duck->baseColor->rgba.data())
+            : 0;
+        textures.generateMipmaps();
+
+        std::vector<DrawData> draws;
+        draws.reserve(drawCount);
         for (int z = 0; z < gridSize; ++z) {
             for (int x = 0; x < gridSize; ++x) {
                 const glm::vec3 pos((x - (gridSize - 1) * 0.5f) * spacing, 0.0f, (z - (gridSize - 1) * 0.5f) * spacing);
                 const float yaw = glm::radians(static_cast<float>((x * 37 + z * 61) % 360));
-                models.push_back(glm::rotate(glm::translate(glm::mat4(1.0f), pos), yaw, glm::vec3(0.0f, 1.0f, 0.0f)));
+                DrawData draw{};
+                draw.model = glm::rotate(glm::translate(glm::mat4(1.0f), pos), yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+                draw.textureLayer = duckLayer;
+                draws.push_back(draw);
                 indirect.add(duckRange);
             }
         }
         indirect.upload();
 
         // Indexed by drawId in mesh.vert
-        GLuint modelSsbo;
-        glGenBuffers(1, &modelSsbo);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelSsbo);
-        glBufferData(GL_SHADER_STORAGE_BUFFER, models.size() * sizeof(glm::mat4), models.data(), GL_STATIC_DRAW);
-        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, modelSsbo);
+        GLuint drawSsbo;
+        glGenBuffers(1, &drawSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, drawSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, draws.size() * sizeof(DrawData), draws.data(), GL_STATIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, drawSsbo);
 
         GLuint program = createProgram(SHADER_DIR "mesh.vert", SHADER_DIR "mesh.frag");
         const GLint viewProjLoc = glGetUniformLocation(program, "uViewProj");
+        glUseProgram(program);
+        glUniform1i(glGetUniformLocation(program, "uTextures"), 0);
 
         Camera camera;
         camera.setAspect(static_cast<float>(fbWidth) / static_cast<float>(fbHeight));
@@ -180,6 +194,7 @@ int main() {
             const glm::mat4 viewProj = camera.getProjection() * camera.getView();
             glUseProgram(program);
             glUniformMatrix4fv(viewProjLoc, 1, GL_FALSE, glm::value_ptr(viewProj));
+            textures.bind(0);
             geometry.bind();
             indirect.draw();
 
@@ -187,7 +202,7 @@ int main() {
         }
 
         glDeleteProgram(program);
-        glDeleteBuffers(1, &modelSsbo);
+        glDeleteBuffers(1, &drawSsbo);
     }  // GL objects must die before the context
 
     SDL_GL_DestroyContext(context);

@@ -4,6 +4,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <cstdio>
+#include <cstring>
 
 static const cgltf_accessor* findAttribute(const cgltf_primitive& prim, cgltf_attribute_type type)
 {
@@ -46,6 +47,30 @@ static void appendPrimitive(const cgltf_primitive& prim, const glm::mat4& world,
     }
 }
 
+static std::optional<ImageData> loadBaseColor(const cgltf_data* data, const std::string& gltfPath)
+{
+    for (cgltf_size m = 0; m < data->materials_count; ++m) {
+        const cgltf_texture* texture = data->materials[m].pbr_metallic_roughness.base_color_texture.texture;
+        if (!texture || !texture->image)
+            continue;
+        const cgltf_image* image = texture->image;
+
+        if (image->buffer_view)
+            return loadImageFromMemory(cgltf_buffer_view_data(image->buffer_view), image->buffer_view->size);
+
+        if (image->uri && std::strncmp(image->uri, "data:", 5) != 0) {
+            std::string uri = image->uri;
+            uri.resize(cgltf_decode_uri(uri.data()));
+            const auto slash = gltfPath.find_last_of("/\\");
+            const std::string dir = slash == std::string::npos ? "" : gltfPath.substr(0, slash + 1);
+            return loadImage(dir + uri);
+        }
+
+        std::fprintf(stderr, "Unsupported image source in %s\n", gltfPath.c_str());
+    }
+    return std::nullopt;
+}
+
 std::optional<MeshData> loadGltf(const std::string& path)
 {
     cgltf_options options{};
@@ -71,6 +96,8 @@ std::optional<MeshData> loadGltf(const std::string& path)
         for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
             appendPrimitive(node.mesh->primitives[p], glm::make_mat4(world), mesh);
     }
+
+    mesh.baseColor = loadBaseColor(data, path);
 
     cgltf_free(data);
     if (mesh.indices.empty()) {
