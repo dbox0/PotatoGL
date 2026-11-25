@@ -1,68 +1,19 @@
-#include "DebugUi.h"
+#include "DebugPanel.h"
 
 #include "app/CameraController.h"
+#include "app/Overlay.h"
 #include "render/Renderer.h"
 #include "scene/Camera.h"
 
 #include <glad/gl.h>
 #include <imgui.h>
-#include <imgui_impl_opengl3.h>
-#include <imgui_impl_sdl3.h>
 
 #include <cstdio>
 
-DebugUi::~DebugUi()
+void DebugPanel::init()
 {
-    shutdown();
-}
-
-bool DebugUi::init(SDL_Window* window, SDL_GLContext context)
-{
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGui::StyleColorsDark();
-    if (!ImGui_ImplSDL3_InitForOpenGL(window, context) || !ImGui_ImplOpenGL3_Init("#version 430 core")) {
-        ImGui::DestroyContext();
-        return false;
-    }
-    m_initialized = true;
     m_glVersion = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     m_glRenderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
-    return true;
-}
-
-void DebugUi::shutdown()
-{
-    if (!m_initialized)
-        return;
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL3_Shutdown();
-    ImGui::DestroyContext();
-    m_initialized = false;
-}
-
-void DebugUi::processEvent(const SDL_Event& event)
-{
-    if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_F1 && !event.key.repeat)
-        m_visible = !m_visible;
-    ImGui_ImplSDL3_ProcessEvent(&event);
-}
-
-bool DebugUi::wantsMouse() const
-{
-    return m_visible && ImGui::GetIO().WantCaptureMouse;
-}
-
-bool DebugUi::wantsKeyboard() const
-{
-    return m_visible && ImGui::GetIO().WantCaptureKeyboard;
-}
-
-void DebugUi::beginFrame()
-{
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL3_NewFrame();
-    ImGui::NewFrame();
 }
 
 static void usageRow(const char* label, long long used, long long capacity)
@@ -75,10 +26,11 @@ static void usageRow(const char* label, long long used, long long capacity)
     ImGui::ProgressBar(fraction, ImVec2(-1.0f, 0.0f), overlay);
 }
 
-void DebugUi::draw(Renderer& renderer, Camera& camera, CameraController& controller)
+void DebugPanel::draw(const OverlayContext& context)
 {
-    if (!m_visible)
-        return;
+    Renderer& renderer = context.renderer;
+    Camera& camera = context.camera;
+    CameraController& controller = context.controller;
 
     ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_FirstUseEver);
@@ -112,7 +64,9 @@ void DebugUi::draw(Renderer& renderer, Camera& camera, CameraController& control
         }
 
         if (ImGui::CollapsingHeader("Shaders", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Auto reload", &m_autoReload);
+            bool autoReload = renderer.shaderAutoReload();
+            if (ImGui::Checkbox("Auto reload", &autoReload))
+                renderer.setShaderAutoReload(autoReload);
             ImGui::SameLine();
             if (ImGui::Button("Reload now"))
                 renderer.reloadShaders();
@@ -126,10 +80,4 @@ void DebugUi::draw(Renderer& renderer, Camera& camera, CameraController& control
 
     if (m_showDemo)
         ImGui::ShowDemoWindow(&m_showDemo);
-}
-
-void DebugUi::render()
-{
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }

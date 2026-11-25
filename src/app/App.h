@@ -1,15 +1,14 @@
 #pragma once
 
 #include "app/CameraController.h"
-#include "app/DebugUi.h"
+#include "app/Overlay.h"
 #include "render/Renderer.h"
 #include "scene/Camera.h"
+#include "scene/Scene.h"
 
 #include <SDL3/SDL.h>
-#include <entt/entt.hpp>
 
 #include <memory>
-#include <string>
 
 class App
 {
@@ -19,14 +18,13 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     Camera m_camera;
     CameraController m_controller;
-    DebugUi m_debugUi;
-    entt::registry m_registry;
+    std::unique_ptr<Overlay> m_overlay;
+    Scene m_scene;
     bool m_running = false;
 
     void handleEvent(const SDL_Event& event);
     void onResize(int width, int height);
     bool buildDemoScene();
-    entt::entity createGameObject(std::string name, ModelId model, const glm::vec3& pos);
     void syncRenderInstances();
 
 public:
@@ -35,6 +33,9 @@ public:
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
+
+    // Call before init
+    void setOverlay(std::unique_ptr<Overlay> overlay) { m_overlay = std::move(overlay); }
 
     bool init(const char* title, int width, int height);
     void run();

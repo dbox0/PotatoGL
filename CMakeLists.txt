@@ -11,6 +11,8 @@ endif()
 
 include(FetchContent)
 
+option(BUILD_EDITOR "Build the ImGui editor overlay" ON)
+
 # SDL3 and glm use an installed package if found, otherwise they are downloaded.
 # A downloaded SDL3 is built static so no DLL has to sit next to the executable.
 set(SDL_SHARED OFF CACHE BOOL "")
@@ -52,7 +54,7 @@ FetchContent_Declare(EnTT
     GIT_TAG v4.0.0
     GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb imgui EnTT)
+FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb EnTT)
 
 # glad 2.0.8, GL 4.3 core, no extensions. Regenerate with:
 #   python -m glad --api "gl:core=4.3" --extensions "" --reproducible --out-path src/third_party/glad c
@@ -68,25 +70,16 @@ target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
 add_library(stb_image STATIC src/third_party/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
 
-add_library(imgui STATIC
-        ${imgui_SOURCE_DIR}/imgui.cpp
-        ${imgui_SOURCE_DIR}/imgui_demo.cpp
-        ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
-target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
-add_executable(${PROJECT_NAME}
-        src/main.cpp
+set(WARNING_FLAGS "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,/W4;/permissive-,-Wall;-Wextra;-Wpedantic>")
+
+# Everything except the editor; must never link imgui
+add_library(engine STATIC
         src/app/App.cpp
         src/app/App.h
         src/app/CameraController.cpp
         src/app/CameraController.h
-        src/app/DebugUi.cpp
-        src/app/DebugUi.h
+        src/app/Overlay.h
         src/assets/FbxLoader.cpp
         src/assets/FbxLoader.h
         src/assets/GltfLoader.cpp
@@ -113,13 +106,46 @@ add_executable(${PROJECT_NAME}
         src/scene/Camera.cpp
         src/scene/Camera.h
         src/scene/Components.h
+        src/scene/Scene.cpp
+        src/scene/Scene.h
         src/scene/Transform.cpp
         src/scene/Transform.h)
-target_include_directories(${PROJECT_NAME} PRIVATE src)
-target_link_libraries(${PROJECT_NAME} PRIVATE glad cgltf ufbx stb_image imgui EnTT::EnTT SDL3::SDL3 glm::glm)
-target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
-target_compile_options(${PROJECT_NAME} PRIVATE
-        "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,/W4;/permissive-,-Wall;-Wextra;-Wpedantic>")
+target_include_directories(engine PUBLIC src)
+target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image)
+target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
+target_compile_options(engine PRIVATE ${WARNING_FLAGS})
+
+if(BUILD_EDITOR)
+    FetchContent_MakeAvailable(imgui)
+    add_library(imgui STATIC
+            ${imgui_SOURCE_DIR}/imgui.cpp
+            ${imgui_SOURCE_DIR}/imgui_demo.cpp
+            ${imgui_SOURCE_DIR}/imgui_draw.cpp
+            ${imgui_SOURCE_DIR}/imgui_tables.cpp
+            ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+    target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+    target_link_libraries(imgui PUBLIC SDL3::SDL3)
+
+    add_library(editor STATIC
+            src/editor/DebugPanel.cpp
+            src/editor/DebugPanel.h
+            src/editor/Editor.cpp
+            src/editor/Editor.h
+            src/editor/SceneHierarchyPanel.cpp
+            src/editor/SceneHierarchyPanel.h)
+    target_link_libraries(editor PUBLIC engine PRIVATE imgui)
+    target_compile_options(editor PRIVATE ${WARNING_FLAGS})
+endif()
+
+add_executable(${PROJECT_NAME} src/main.cpp)
+target_link_libraries(${PROJECT_NAME} PRIVATE engine)
+if(BUILD_EDITOR)
+    target_link_libraries(${PROJECT_NAME} PRIVATE editor)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE WITH_EDITOR)
+endif()
+target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 
 # shaders/ and assets/ are copied next to the executable on every build and loaded
 # from there, except in Debug, which reads the source tree (DEV_RESOURCE_DIR above)

@@ -142,6 +142,8 @@ void Renderer::reloadShaders()
 
 void Renderer::pollShaderChanges()
 {
+    if (!m_shaderAutoReload)
+        return;
     const auto now = std::chrono::steady_clock::now();
     if (now - m_lastShaderPoll < std::chrono::milliseconds(500))
         return;

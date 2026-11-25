@@ -2,13 +2,13 @@
 
 #include "assets/Model.h"
 #include "core/Paths.h"
-#include "scene/Components.h"
 #include "scene/Transform.h"
 
 #include <glad/gl.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <cstdio>
+#include <string>
 
 #ifndef NDEBUG
 static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum severity,
@@ -22,7 +22,8 @@ static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum sev
 
 App::~App()
 {
-    m_debugUi.shutdown();  // GL objects must die before the context
+    if (m_overlay)
+        m_overlay->shutdown();  // GL objects must die before the context
     m_renderer.reset();
     if (m_context)
         SDL_GL_DestroyContext(m_context);
@@ -77,8 +78,8 @@ bool App::init(const char* title, int width, int height)
     m_renderer = Renderer::create();
     if (!m_renderer)
         return false;
-    if (!m_debugUi.init(m_window, m_context)) {
-        std::fprintf(stderr, "Failed to init Dear ImGui\n");
+    if (m_overlay && !m_overlay->init(m_window, m_context)) {
+        std::fprintf(stderr, "Failed to init overlay\n");
         return false;
     }
 
@@ -96,14 +97,27 @@ bool App::buildDemoScene()
         return false;
     const ModelId duckModel = m_renderer->addModel(*duck);
 
+    const entt::entity ducks = m_scene.createGameObject("Ducks");
+    entt::registry& registry = m_scene.registry();
+
     constexpr int gridSize = 10;
     constexpr float spacing = 2.5f;
     for (int z = 0; z < gridSize; ++z) {
         for (int x = 0; x < gridSize; ++x) {
             const glm::vec3 pos((x - (gridSize - 1) * 0.5f) * spacing, 0.0f, (z - (gridSize - 1) * 0.5f) * spacing);
-            const entt::entity duckObject = createGameObject("Duck", duckModel, pos);
             const float yaw = glm::radians(static_cast<float>((x * 37 + z * 61) % 360));
-            m_registry.get<Transform>(duckObject).rotate(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+            const entt::entity duck = m_scene.createGameObject("Duck " + std::to_string(z * gridSize + x), ducks);
+            Transform& transform = registry.get<Transform>(duck);
+            transform.setPos(pos);
+            transform.rotate(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+            registry.emplace<MeshRenderer>(duck, duckModel);
+
+            if (x == 0 && z == 0) {
+                const entt::entity duckling = m_scene.createGameObject("Duckling", duck);
+                registry.get<Transform>(duckling).setPos({0.0f, 1.5f, 0.0f});
+                registry.get<Transform>(duckling).setScale(glm::vec3(0.5f));
+                registry.emplace<MeshRenderer>(duckling, duckModel);
+            }
         }
     }
 
@@ -113,21 +127,12 @@ bool App::buildDemoScene()
     return true;
 }
 
-entt::entity App::createGameObject(std::string name, ModelId model, const glm::vec3& pos)
-{
-    const entt::entity entity = m_registry.create();
-    m_registry.emplace<Name>(entity, std::move(name));
-    m_registry.emplace<Transform>(entity).setPos(pos);
-    m_registry.emplace<MeshRenderer>(entity, model);
-    return entity;
-}
-
 // Rebuilds every instance each frame until the Renderer gets handle-based instances
 void App::syncRenderInstances()
 {
     m_renderer->clearInstances();
-    for (auto [entity, transform, mesh] : m_registry.view<Transform, MeshRenderer>().each())
-        m_renderer->addInstance(mesh.model, transform.getMatrix());
+    for (auto [entity, world, mesh] : m_scene.registry().view<WorldTransform, MeshRenderer>().each())
+        m_renderer->addInstance(mesh.model, world.matrix);
 }
 
 void App::onResize(int width, int height)
@@ -140,8 +145,9 @@ void App::onResize(int width, int height)
 
 void App::handleEvent(const SDL_Event& event)
 {
-    m_debugUi.processEvent(event);
-    const bool clickOnUi = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_debugUi.wantsMouse();
+    if (m_overlay)
+        m_overlay->processEvent(event);
+    const bool clickOnUi = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_overlay && m_overlay->wantsMouse();
     if (!clickOnUi)
         m_controller.handleEvent(event, m_window);
 
@@ -166,17 +172,18 @@ void App::run()
         while (SDL_PollEvent(&event))
             handleEvent(event);
 
-        m_debugUi.beginFrame();
-        m_debugUi.draw(*m_renderer, m_camera, m_controller);
+        if (m_overlay)
+            m_overlay->update({*m_renderer, m_scene, m_camera, m_controller});
 
-        m_controller.setKeyboardEnabled(!m_debugUi.wantsKeyboard());
+        m_controller.setKeyboardEnabled(!(m_overlay && m_overlay->wantsKeyboard()));
         m_controller.update(dt, m_camera);
-        if (m_debugUi.autoReloadShaders())
-            m_renderer->pollShaderChanges();
+        m_renderer->pollShaderChanges();
 
+        m_scene.updateWorldTransforms();
         syncRenderInstances();
         m_renderer->render(m_camera);
-        m_debugUi.render();
+        if (m_overlay)
+            m_overlay->render();
         SDL_GL_SwapWindow(m_window);
     }
 }

@@ -61,6 +61,7 @@ private:
     bool m_drawsDirty = false;
 
     std::chrono::steady_clock::time_point m_lastShaderPoll;
+    bool m_shaderAutoReload = true;
 
     explicit Renderer(const Config& config);
     void onShaderLoaded();
@@ -84,6 +85,8 @@ public:
 
     void reloadShaders();
     void pollShaderChanges();  // cheap to call every frame, checks file times twice a second
+    void setShaderAutoReload(bool enabled) { m_shaderAutoReload = enabled; }
+    bool shaderAutoReload() const          { return m_shaderAutoReload; }
     const std::string& shaderError() const { return m_shader.lastError(); }
 
     Stats stats() const;
