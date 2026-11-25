@@ -69,7 +69,7 @@ int main() {
         return EXIT_FAILURE;
     }
 
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -100,12 +100,9 @@ int main() {
     std::printf("GL %s | %s\n", glGetString(GL_VERSION), glGetString(GL_RENDERER));
 
 #ifndef NDEBUG
-    // Debug output is core only in 4.3; on 3.3 it needs KHR_debug
-    if (GLAD_GL_KHR_debug) {
-        glEnable(GL_DEBUG_OUTPUT);
-        glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-        glDebugMessageCallback(glDebugCallback, nullptr);
-    }
+    glEnable(GL_DEBUG_OUTPUT);
+    glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+    glDebugMessageCallback(glDebugCallback, nullptr);
 #endif
 
     int fbWidth, fbHeight;
@@ -119,7 +116,7 @@ int main() {
          0.0f,  0.5f, 0.0f, 0.0f, 1.0f,
     };
 
-    // Bind-to-edit (GL 3.3; DSA needs 4.5)
+    // Bind-to-edit (DSA needs 4.5)
     GLuint vao;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);

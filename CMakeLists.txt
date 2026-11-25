@@ -21,8 +21,8 @@ FetchContent_Declare(glad
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR cmake)
 FetchContent_MakeAvailable(glad)
-# GL 3.3 core for old hardware; KHR_debug is optional at runtime
-glad_add_library(glad_gl_core_33 REPRODUCIBLE API gl:core=3.3 EXTENSIONS GL_KHR_debug)
+# GL 4.3 core: Intel HD 4600 (Haswell) on Windows tops out at 4.3; needed for multi-draw indirect
+glad_add_library(glad_gl_core_43 REPRODUCIBLE API gl:core=4.3)
 
 # Model loaders. SOURCE_SUBDIR points at a missing dir so their own
 # CMakeLists (tests etc.) are skipped; we build the sources ourselves.
@@ -49,6 +49,6 @@ add_executable(renderer src/main.cpp
         src/scene/Camera.h
         src/scene/Transform.cpp
         src/scene/Transform.h)
-target_link_libraries(renderer PRIVATE glad_gl_core_33 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)
+target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)
 target_compile_definitions(renderer PRIVATE SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/")
 target_compile_options(renderer PRIVATE -Wall -Wextra -Wpedantic)
