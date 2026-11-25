@@ -21,9 +21,30 @@ FetchContent_Declare(glad
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR cmake)
 FetchContent_MakeAvailable(glad)
-glad_add_library(glad_gl_core_46 REPRODUCIBLE API gl:core=4.6)
+# GL 3.3 core for old hardware; KHR_debug is optional at runtime
+glad_add_library(glad_gl_core_33 REPRODUCIBLE API gl:core=3.3 EXTENSIONS GL_KHR_debug)
+
+# Model loaders. SOURCE_SUBDIR points at a missing dir so their own
+# CMakeLists (tests etc.) are skipped; we build the sources ourselves.
+FetchContent_Declare(cgltf
+    GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
+    GIT_TAG v1.15
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR none)
+FetchContent_Declare(ufbx
+    GIT_REPOSITORY https://github.com/ufbx/ufbx.git
+    GIT_TAG v0.23.1
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR none)
+FetchContent_MakeAvailable(cgltf ufbx)
+
+add_library(cgltf STATIC src/third_party/cgltf_impl.c)
+target_include_directories(cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
+
+add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
+target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
 
 add_executable(renderer src/main.cpp)
-target_link_libraries(renderer PRIVATE glad_gl_core_46 SDL3::SDL3 glm::glm OpenGL::GL)
+target_link_libraries(renderer PRIVATE glad_gl_core_33 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)
 target_compile_definitions(renderer PRIVATE SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/")
 target_compile_options(renderer PRIVATE -Wall -Wextra -Wpedantic)
