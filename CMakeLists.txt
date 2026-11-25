@@ -36,13 +36,20 @@ FetchContent_Declare(ufbx
     GIT_TAG v0.23.1
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR none)
-FetchContent_MakeAvailable(cgltf ufbx)
+# stb has no releases; pinned to a commit
+FetchContent_Declare(stb
+    URL https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz
+    SOURCE_SUBDIR none)
+FetchContent_MakeAvailable(cgltf ufbx stb)
 
 add_library(cgltf STATIC src/third_party/cgltf_impl.c)
 target_include_directories(cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
 
 add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
 target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
+
+add_library(stb_image STATIC src/third_party/stb_image_impl.c)
+target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
 
 add_executable(renderer src/main.cpp
         src/scene/Camera.cpp
@@ -57,7 +64,7 @@ add_executable(renderer src/main.cpp
         src/gfx/IndirectBuffer.h
         src/assets/GltfLoader.cpp
         src/assets/GltfLoader.h)
-target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)
+target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx stb_image SDL3::SDL3 glm::glm OpenGL::GL)
 target_compile_definitions(renderer PRIVATE
         SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
         ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/")
