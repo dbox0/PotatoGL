@@ -45,8 +45,8 @@ add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
 target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
 
 add_executable(renderer src/main.cpp
-        src/scene/camera.cpp
-        src/scene/camera.h
+        src/scene/Camera.cpp
+        src/scene/Camera.h
         src/scene/Transform.cpp
         src/scene/Transform.h)
 target_link_libraries(renderer PRIVATE glad_gl_core_33 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)

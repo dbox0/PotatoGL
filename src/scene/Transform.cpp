@@ -4,65 +4,65 @@
 
 void Transform::setPos(const glm::vec3& p)
 {
-    pos = p;
+    m_pos = p;
 }
 
 void Transform::setRot(const glm::quat& r)
 {
-    rot = glm::normalize(r);
+    m_rot = glm::normalize(r);
 }
 
 void Transform::setScale(const glm::vec3& s)
 {
-    scale = s;
+    m_scale = s;
 }
 
 void Transform::setEulerAngles(const glm::vec3& radians)
 {
-    rot = glm::quat(radians);
+    m_rot = glm::quat(radians);
 }
 
 glm::mat4 Transform::getMatrix() const
 {
-    glm::mat4 m = glm::translate(glm::mat4(1.0f), pos);
-    m *= glm::mat4_cast(rot);
-    return glm::scale(m, scale);
+    glm::mat4 m = glm::translate(glm::mat4(1.0f), m_pos);
+    m *= glm::mat4_cast(m_rot);
+    return glm::scale(m, m_scale);
 }
 
 // OpenGL -Z forward, +X right, +Y up
 glm::vec3 Transform::forward() const
 {
-    return rot * glm::vec3(0.0f, 0.0f, -1.0f);
+    return m_rot * glm::vec3(0.0f, 0.0f, -1.0f);
 }
 
 glm::vec3 Transform::right() const
 {
-    return rot * glm::vec3(1.0f, 0.0f, 0.0f);
+    return m_rot * glm::vec3(1.0f, 0.0f, 0.0f);
 }
 
 glm::vec3 Transform::up() const
 {
-    return rot * glm::vec3(0.0f, 1.0f, 0.0f);
+    return m_rot * glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
 // Rotates around a world-space axis
 void Transform::rotate(float radians, const glm::vec3& axis)
 {
-    rot = glm::normalize(glm::angleAxis(radians, glm::normalize(axis)) * rot);
+    m_rot = glm::normalize(glm::angleAxis(radians, glm::normalize(axis)) * m_rot);
 }
 
 void Transform::lookAt(const glm::vec3& target, const glm::vec3& worldUp)
 {
-    glm::vec3 dir = target - pos;
+    glm::vec3 dir = target - m_pos;
     if (glm::dot(dir, dir) < 1e-12f)
         return;
     dir = glm::normalize(dir);
     if (glm::abs(glm::dot(dir, glm::normalize(worldUp))) > 0.9999f)
         return;  // looking straight along worldUp is undefined
-    rot = glm::quatLookAt(dir, worldUp);
+    m_rot = glm::quatLookAt(dir, worldUp);
 }
 
 void Transform::translate(const glm::vec3& delta)
 {
-    pos += delta;
+    m_pos += delta;
 }

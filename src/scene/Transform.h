@@ -6,14 +6,14 @@
 class Transform
 {
 private:
-    glm::vec3 pos = glm::vec3(0.0f);
-    glm::quat rot = glm::identity<glm::quat>();
-    glm::vec3 scale = glm::vec3(1.0f);
+    glm::vec3 m_pos = glm::vec3(0.0f);
+    glm::quat m_rot = glm::identity<glm::quat>();
+    glm::vec3 m_scale = glm::vec3(1.0f);
 
 public:
-    glm::vec3 getPos()      { return pos;   }
-    glm::quat getRot()      { return rot;   }
-    glm::vec3 getScale()    { return scale; }
+    glm::vec3 getPos()      { return m_pos;   }
+    glm::quat getRot()      { return m_rot;   }
+    glm::vec3 getScale()    { return m_scale; }
 
     void setPos(const glm::vec3& p);
     void setRot(const glm::quat& r);
