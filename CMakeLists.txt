@@ -68,7 +68,9 @@ add_executable(renderer src/main.cpp
         src/assets/Image.h
         src/gfx/DrawData.h
         src/gfx/TextureArray.cpp
-        src/gfx/TextureArray.h)
+        src/gfx/TextureArray.h
+        src/app/CameraController.cpp
+        src/app/CameraController.h)
 target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx stb_image SDL3::SDL3 glm::glm OpenGL::GL)
 target_compile_definitions(renderer PRIVATE
         SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
