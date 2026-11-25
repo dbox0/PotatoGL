@@ -91,6 +91,7 @@ add_library(engine STATIC
         src/engine/assets/Model.h
         src/engine/core/Paths.cpp
         src/engine/core/Paths.h
+        src/engine/reflect/ComponentRegistry.h
         src/engine/gfx/DrawCommand.h
         src/engine/gfx/DrawData.h
         src/engine/gfx/GeometryBuffer.cpp
@@ -106,11 +107,16 @@ add_library(engine STATIC
         src/engine/render/Renderer.h
         src/engine/scene/Camera.cpp
         src/engine/scene/Camera.h
+        src/engine/scene/ComponentReflection.cpp
+        src/engine/scene/ComponentReflection.h
         src/engine/scene/Components.h
         src/engine/scene/Scene.cpp
         src/engine/scene/Scene.h
         src/engine/scene/Transform.cpp
-        src/engine/scene/Transform.h)
+        src/engine/scene/Transform.h
+        src/engine/script/ScriptContext.h
+        src/engine/script/ScriptRunner.cpp
+        src/engine/script/ScriptRunner.h)
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image)
 target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
@@ -134,6 +140,9 @@ if(BUILD_EDITOR)
             src/editor/DebugPanel.h
             src/editor/Editor.cpp
             src/editor/Editor.h
+            src/editor/EditorLayout.h
+            src/editor/InspectorPanel.cpp
+            src/editor/InspectorPanel.h
             src/editor/SceneHierarchyPanel.cpp
             src/editor/SceneHierarchyPanel.h)
     target_link_libraries(editor PUBLIC engine PRIVATE imgui)
@@ -142,11 +151,16 @@ endif()
 
 # Gameplay; links engine, never imgui
 add_library(game STATIC
+        src/game/Components.cpp
         src/game/Components.h
         src/game/Gameplay.cpp
         src/game/Gameplay.h
         src/game/Systems.cpp
-        src/game/Systems.h)
+        src/game/Systems.h
+        src/game/scripts/Register.cpp
+        src/game/scripts/Register.h
+        src/game/scripts/Rotator.cpp
+        src/game/scripts/Rotator.h)
 target_link_libraries(game PUBLIC engine)
 target_compile_options(game PRIVATE ${WARNING_FLAGS})
 

@@ -4,6 +4,7 @@
 
 class Camera;
 class CameraController;
+class ComponentRegistry;
 class Renderer;
 class Scene;
 
@@ -13,6 +14,7 @@ struct OverlayContext
     Scene& scene;
     Camera& camera;
     CameraController& controller;
+    ComponentRegistry& components;
 };
 
 // Optional UI drawn on top of the scene (the editor). App works without one.

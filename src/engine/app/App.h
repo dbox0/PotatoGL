@@ -3,6 +3,7 @@
 #include "engine/app/CameraController.h"
 #include "engine/app/Game.h"
 #include "engine/app/Overlay.h"
+#include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
@@ -19,6 +20,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     Camera m_camera;
     CameraController m_controller;
+    ComponentRegistry m_components;
     std::unique_ptr<Overlay> m_overlay;
     std::unique_ptr<Game> m_game;
     Scene m_scene;
@@ -26,7 +28,7 @@ private:
 
     void handleEvent(const SDL_Event& event);
     void onResize(int width, int height);
-    GameContext gameContext() { return {*m_renderer, m_scene, m_camera}; }
+    GameContext gameContext() { return {*m_renderer, m_scene, m_camera, m_components}; }
     void syncRenderInstances();
 
 public:

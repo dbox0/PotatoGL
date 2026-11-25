@@ -2,6 +2,7 @@
 
 #include "engine/app/Overlay.h"
 #include "editor/DebugPanel.h"
+#include "editor/InspectorPanel.h"
 #include "editor/SceneHierarchyPanel.h"
 
 // Dear ImGui editor overlay; F1 toggles it. The only place that touches ImGui.
@@ -12,6 +13,7 @@ private:
     bool m_visible = true;
     DebugPanel m_debugPanel;
     SceneHierarchyPanel m_hierarchyPanel;
+    InspectorPanel m_inspectorPanel;
 
 public:
     Editor() = default;

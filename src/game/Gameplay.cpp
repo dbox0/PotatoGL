@@ -2,9 +2,12 @@
 
 #include "game/Components.h"
 #include "game/Systems.h"
+#include "game/scripts/Register.h"
+#include "game/scripts/Rotator.h"
 
 #include "engine/assets/Model.h"
 #include "engine/core/Paths.h"
+#include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
@@ -17,6 +20,10 @@ bool Gameplay::init(const GameContext& context)
 {
     Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
+
+    registerGameComponents(context.components);
+    m_scripts = std::make_unique<ScriptRunner>(scene, context.components);
+    registerScripts(*m_scripts);
 
     std::optional<ModelData> duck = loadModel(resourcePath("assets/Duck.glb"));
     if (!duck)
@@ -43,6 +50,7 @@ bool Gameplay::init(const GameContext& context)
                 registry.get<Transform>(duckling).setPos({0.0f, 1.5f, 0.0f});
                 registry.get<Transform>(duckling).setScale(glm::vec3(0.5f));
                 registry.emplace<MeshRenderer>(duckling, duckModel);
+                registry.emplace<Rotator>(duckling, glm::vec3(1.0f, 0.0f, 0.0f), 180.0f);
             }
         }
     }
@@ -56,11 +64,15 @@ bool Gameplay::init(const GameContext& context)
 // from triggering a burst of catch-up steps.
 void Gameplay::update(const GameContext& context, float dt)
 {
+    m_scripts->update(dt);
+
     m_accumulator = std::min(m_accumulator + dt, 0.25f);
     while (m_accumulator >= FixedStep) {
         fixedUpdate(context, FixedStep);
         m_accumulator -= FixedStep;
     }
+
+    m_scripts->lateUpdate(dt);
 }
 
 void Gameplay::fixedUpdate(const GameContext& context, float dt)
@@ -69,10 +81,12 @@ void Gameplay::fixedUpdate(const GameContext& context, float dt)
     movementSystem(registry, dt);
     spinSystem(registry, dt);
     lifetimeSystem(registry, dt);
+    m_scripts->fixedUpdate(dt);
     cleanupSystem(context.scene);
 }
 
-// Gameplay owns nothing yet: entities belong to the Scene, models to the Renderer
+// Entities belong to the Scene and models to the Renderer; only the script hooks are ours
 void Gameplay::shutdown(const GameContext&)
 {
+    m_scripts.reset();
 }

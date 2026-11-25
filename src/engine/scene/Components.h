@@ -32,3 +32,7 @@ struct WorldTransform
 {
     glm::mat4 matrix = glm::mat4(1.0f);
 };
+
+// Tags: empty types, EnTT stores no data for them
+struct Disabled {};  // skipped by gameplay systems and scripts
+struct Dead {};      // destroyed at the end of the gameplay step

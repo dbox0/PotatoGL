@@ -122,3 +122,14 @@ void Scene::updateWorld(entt::entity e, const glm::mat4& parentWorld)
         w->matrix = world;
     forEachChild(e, [&](entt::entity child) { updateWorld(child, world); });
 }
+
+void Scene::flushDeferred()
+{
+    // Deferred work may defer more; keep going until the queue settles
+    while (!m_deferred.empty()) {
+        std::vector<std::function<void(Scene&)>> pending;
+        pending.swap(m_deferred);
+        for (auto& fn : pending)
+            fn(*this);
+    }
+}

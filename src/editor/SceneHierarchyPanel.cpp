@@ -1,5 +1,7 @@
 #include "SceneHierarchyPanel.h"
 
+#include "editor/EditorLayout.h"
+
 #include "engine/scene/Scene.h"
 
 #include <imgui.h>
@@ -17,7 +19,7 @@ void SceneHierarchyPanel::draw(Scene& scene)
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y),
                             ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowSize(ImVec2(m_width, viewport->WorkSize.y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(SidebarWidth, viewport->WorkSize.y * HierarchyHeightFraction), ImGuiCond_Always);
     const ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
 
     if (ImGui::Begin("Scene Hierarchy", nullptr, flags)) {

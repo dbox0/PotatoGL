@@ -11,9 +11,9 @@ private:
     glm::vec3 m_scale = glm::vec3(1.0f);
 
 public:
-    glm::vec3 getPos()      { return m_pos;   }
-    glm::quat getRot()      { return m_rot;   }
-    glm::vec3 getScale()    { return m_scale; }
+    glm::vec3 getPos() const   { return m_pos;   }
+    glm::quat getRot() const   { return m_rot;   }
+    glm::vec3 getScale() const { return m_scale; }
 
     void setPos(const glm::vec3& p);
     void setRot(const glm::quat& r);

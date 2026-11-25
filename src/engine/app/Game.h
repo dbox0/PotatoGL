@@ -1,6 +1,7 @@
 #pragma once
 
 class Camera;
+class ComponentRegistry;
 class Renderer;
 class Scene;
 
@@ -9,6 +10,7 @@ struct GameContext
     Renderer& renderer;
     Scene& scene;
     Camera& camera;
+    ComponentRegistry& components;
 };
 
 // Gameplay module plugged into App. The engine never depends on the implementation.

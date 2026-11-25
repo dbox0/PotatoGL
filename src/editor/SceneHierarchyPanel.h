@@ -7,7 +7,6 @@ class Scene;
 class SceneHierarchyPanel
 {
 private:
-    float m_width = 280.0f;
     entt::entity m_selected = entt::null;
 
     // Tree edits are deferred until after drawing so the walk never sees a changing hierarchy

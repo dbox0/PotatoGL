@@ -5,7 +5,9 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
+#include <functional>
 #include <string>
+#include <vector>
 
 // Owns the registry and the hierarchy. Top-level objects are children of a hidden root.
 class Scene
@@ -13,6 +15,7 @@ class Scene
 private:
     entt::registry m_registry;
     entt::entity m_root = entt::null;
+    std::vector<std::function<void(Scene&)>> m_deferred;
 
     void link(entt::entity e, entt::entity parent);
     void unlink(entt::entity e);
@@ -41,6 +44,10 @@ public:
     bool isAncestor(entt::entity ancestor, entt::entity e) const;
 
     void updateWorldTransforms();
+
+    // For structural changes that aren't safe mid-iteration (spawning, reparenting)
+    void defer(std::function<void(Scene&)> fn) { m_deferred.push_back(std::move(fn)); }
+    void flushDeferred();
 
     template<typename Fn>
     void forEachChild(entt::entity e, Fn&& fn) const

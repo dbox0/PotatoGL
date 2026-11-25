@@ -21,6 +21,6 @@ struct Lifetime
     float remaining = 0.0f;
 };
 
-// Tags: empty types, EnTT stores no data for them
-struct Disabled {};
-struct Dead {};
+class ComponentRegistry;
+
+void registerGameComponents(ComponentRegistry& components);

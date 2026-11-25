@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "engine/scene/ComponentReflection.h"
 
 #include <glad/gl.h>
 
@@ -85,6 +86,7 @@ bool App::init(const char* title, int width, int height)
     SDL_GetWindowSizeInPixels(m_window, &fbWidth, &fbHeight);
     onResize(fbWidth, fbHeight);
 
+    registerSceneComponents(m_components);
     if (m_game && !m_game->init(gameContext()))
         return false;
     m_controller.syncFrom(m_camera);
@@ -137,7 +139,7 @@ void App::run()
             handleEvent(event);
 
         if (m_overlay)
-            m_overlay->update({*m_renderer, m_scene, m_camera, m_controller});
+            m_overlay->update({*m_renderer, m_scene, m_camera, m_controller, m_components});
 
         m_controller.setKeyboardEnabled(!(m_overlay && m_overlay->wantsKeyboard()));
         m_controller.update(dt, m_camera);

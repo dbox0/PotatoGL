@@ -59,6 +59,7 @@ void Editor::update(const OverlayContext& context)
         return;
     m_debugPanel.draw(context);
     m_hierarchyPanel.draw(context.scene);
+    m_inspectorPanel.draw(context.scene, context.components, m_hierarchyPanel.selected());
 }
 
 void Editor::render()
