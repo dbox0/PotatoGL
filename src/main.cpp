@@ -1,11 +1,20 @@
 #include <glad/gl.h>
 #include <SDL3/SDL.h>
 
+#include "assets/GltfLoader.h"
+#include "gfx/GeometryBuffer.h"
+#include "gfx/IndirectBuffer.h"
+#include "scene/Camera.h"
+
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 static std::string readFile(const std::string& path) {
     std::ifstream f(path);
@@ -109,56 +118,78 @@ int main() {
     SDL_GetWindowSizeInPixels(window, &fbWidth, &fbHeight);
     glViewport(0, 0, fbWidth, fbHeight);
 
-    // x, y, r, g, b
-    const float vertices[] = {
-        -0.5f, -0.5f, 1.0f, 0.0f, 0.0f,
-         0.5f, -0.5f, 0.0f, 1.0f, 0.0f,
-         0.0f,  0.5f, 0.0f, 0.0f, 1.0f,
-    };
+    {
+        constexpr int gridSize = 10;
+        constexpr int drawCount = gridSize * gridSize;
+        constexpr float spacing = 2.5f;
 
-    // Bind-to-edit (DSA needs 4.5)
-    GLuint vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+        std::optional<MeshData> duck = loadGltf(ASSET_DIR "Duck.glb");
+        if (!duck)
+            return EXIT_FAILURE;
 
-    GLuint vbo;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+        GeometryBuffer geometry(1 << 16, 1 << 18, drawCount);
+        IndirectBuffer indirect(drawCount);
 
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), reinterpret_cast<void*>(2 * sizeof(float)));
-    glBindVertexArray(0);
+        const MeshRange duckRange = geometry.addMesh(duck->vertices, duck->indices);
+        std::vector<glm::mat4> models;
+        models.reserve(drawCount);
+        for (int z = 0; z < gridSize; ++z) {
+            for (int x = 0; x < gridSize; ++x) {
+                const glm::vec3 pos((x - (gridSize - 1) * 0.5f) * spacing, 0.0f, (z - (gridSize - 1) * 0.5f) * spacing);
+                const float yaw = glm::radians(static_cast<float>((x * 37 + z * 61) % 360));
+                models.push_back(glm::rotate(glm::translate(glm::mat4(1.0f), pos), yaw, glm::vec3(0.0f, 1.0f, 0.0f)));
+                indirect.add(duckRange);
+            }
+        }
+        indirect.upload();
 
-    GLuint program = createProgram(SHADER_DIR "triangle.vert", SHADER_DIR "triangle.frag");
+        // Indexed by drawId in mesh.vert
+        GLuint modelSsbo;
+        glGenBuffers(1, &modelSsbo);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, modelSsbo);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, models.size() * sizeof(glm::mat4), models.data(), GL_STATIC_DRAW);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, modelSsbo);
 
-    bool running = true;
-    while (running) {
-        SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_QUIT)
-                running = false;
-            else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE)
-                running = false;
-            else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
-                glViewport(0, 0, event.window.data1, event.window.data2);
+        GLuint program = createProgram(SHADER_DIR "mesh.vert", SHADER_DIR "mesh.frag");
+        const GLint viewProjLoc = glGetUniformLocation(program, "uViewProj");
+
+        Camera camera;
+        camera.setAspect(static_cast<float>(fbWidth) / static_cast<float>(fbHeight));
+        camera.getTransform().setPos({0.0f, 12.0f, 22.0f});
+        camera.getTransform().lookAt({0.0f, 0.0f, 0.0f});
+
+        glEnable(GL_DEPTH_TEST);
+
+        bool running = true;
+        while (running) {
+            SDL_Event event;
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_EVENT_QUIT)
+                    running = false;
+                else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE)
+                    running = false;
+                else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED && event.window.data2 > 0) {
+                    glViewport(0, 0, event.window.data1, event.window.data2);
+                    camera.setAspect(static_cast<float>(event.window.data1) / static_cast<float>(event.window.data2));
+                }
+            }
+
+            glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            const glm::mat4 viewProj = camera.getProjection() * camera.getView();
+            glUseProgram(program);
+            glUniformMatrix4fv(viewProjLoc, 1, GL_FALSE, glm::value_ptr(viewProj));
+            geometry.bind();
+            indirect.draw();
+
+            SDL_GL_SwapWindow(window);
         }
 
-        glClearColor(0.1f, 0.1f, 0.12f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glDeleteProgram(program);
+        glDeleteBuffers(1, &modelSsbo);
+    }  // GL objects must die before the context
 
-        glUseProgram(program);
-        glBindVertexArray(vao);
-        glDrawArrays(GL_TRIANGLES, 0, 3);
-
-        SDL_GL_SwapWindow(window);
-    }
-
-    glDeleteProgram(program);
-    glDeleteVertexArrays(1, &vao);
-    glDeleteBuffers(1, &vbo);
     SDL_GL_DestroyContext(context);
     SDL_DestroyWindow(window);
     SDL_Quit();

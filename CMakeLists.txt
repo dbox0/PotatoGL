@@ -48,7 +48,17 @@ add_executable(renderer src/main.cpp
         src/scene/Camera.cpp
         src/scene/Camera.h
         src/scene/Transform.cpp
-        src/scene/Transform.h)
+        src/scene/Transform.h
+        src/gfx/Vertex.h
+        src/gfx/DrawCommand.h
+        src/gfx/GeometryBuffer.cpp
+        src/gfx/GeometryBuffer.h
+        src/gfx/IndirectBuffer.cpp
+        src/gfx/IndirectBuffer.h
+        src/assets/GltfLoader.cpp
+        src/assets/GltfLoader.h)
 target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx SDL3::SDL3 glm::glm OpenGL::GL)
-target_compile_definitions(renderer PRIVATE SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/")
+target_compile_definitions(renderer PRIVATE
+        SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
+        ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/")
 target_compile_options(renderer PRIVATE -Wall -Wextra -Wpedantic)
