@@ -1,5 +1,7 @@
 #include "GltfLoader.h"
 
+#include "core/Paths.h"
+
 #include <cgltf.h>
 #include <glm/gtc/type_ptr.hpp>
 
@@ -14,64 +16,102 @@ static const cgltf_accessor* findAttribute(const cgltf_primitive& prim, cgltf_at
     return nullptr;
 }
 
-static void appendPrimitive(const cgltf_primitive& prim, const glm::mat4& world, MeshData& out)
+static std::optional<ImageData> loadImage(const cgltf_image& image, const std::string& gltfPath)
 {
-    const cgltf_accessor* positions = findAttribute(prim, cgltf_attribute_type_position);
-    if (prim.type != cgltf_primitive_type_triangles || !positions)
-        return;
-    const cgltf_accessor* normals = findAttribute(prim, cgltf_attribute_type_normal);
-    const cgltf_accessor* uvs = findAttribute(prim, cgltf_attribute_type_texcoord);
+    if (image.buffer_view)
+        return loadImageFromMemory(cgltf_buffer_view_data(image.buffer_view), image.buffer_view->size);
 
-    const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(world)));
-    const auto base = static_cast<std::uint32_t>(out.vertices.size());
-
-    for (cgltf_size i = 0; i < positions->count; ++i) {
-        Vertex v{};
-        cgltf_accessor_read_float(positions, i, glm::value_ptr(v.position), 3);
-        v.position = glm::vec3(world * glm::vec4(v.position, 1.0f));
-        if (normals) {
-            cgltf_accessor_read_float(normals, i, glm::value_ptr(v.normal), 3);
-            v.normal = glm::normalize(normalMatrix * v.normal);
-        }
-        if (uvs)
-            cgltf_accessor_read_float(uvs, i, glm::value_ptr(v.uv), 2);
-        out.vertices.push_back(v);
+    if (image.uri && std::strncmp(image.uri, "data:", 5) != 0) {
+        std::string uri = image.uri;
+        uri.resize(cgltf_decode_uri(uri.data()));
+        return loadImage(directoryOf(gltfPath) + uri);
     }
 
-    if (prim.indices) {
-        for (cgltf_size i = 0; i < prim.indices->count; ++i)
-            out.indices.push_back(base + static_cast<std::uint32_t>(cgltf_accessor_read_index(prim.indices, i)));
-    } else {
-        for (cgltf_size i = 0; i < positions->count; ++i)
-            out.indices.push_back(base + static_cast<std::uint32_t>(i));
-    }
-}
-
-static std::optional<ImageData> loadBaseColor(const cgltf_data* data, const std::string& gltfPath)
-{
-    for (cgltf_size m = 0; m < data->materials_count; ++m) {
-        const cgltf_texture* texture = data->materials[m].pbr_metallic_roughness.base_color_texture.texture;
-        if (!texture || !texture->image)
-            continue;
-        const cgltf_image* image = texture->image;
-
-        if (image->buffer_view)
-            return loadImageFromMemory(cgltf_buffer_view_data(image->buffer_view), image->buffer_view->size);
-
-        if (image->uri && std::strncmp(image->uri, "data:", 5) != 0) {
-            std::string uri = image->uri;
-            uri.resize(cgltf_decode_uri(uri.data()));
-            const auto slash = gltfPath.find_last_of("/\\");
-            const std::string dir = slash == std::string::npos ? "" : gltfPath.substr(0, slash + 1);
-            return loadImage(dir + uri);
-        }
-
-        std::fprintf(stderr, "Unsupported image source in %s\n", gltfPath.c_str());
-    }
+    std::fprintf(stderr, "Unsupported image source in %s\n", gltfPath.c_str());
     return std::nullopt;
 }
 
-std::optional<MeshData> loadGltf(const std::string& path)
+namespace {
+
+class GltfBuilder
+{
+private:
+    const cgltf_data* m_data;
+    const std::string& m_path;
+    std::vector<int> m_imageToTexture;  // -1 = not loaded yet, -2 = failed
+    ModelData m_model;
+
+    int textureFor(const cgltf_material* material)
+    {
+        if (!material)
+            return -1;
+        const cgltf_texture* texture = material->pbr_metallic_roughness.base_color_texture.texture;
+        if (!texture || !texture->image)
+            return -1;
+
+        const auto imageIndex = static_cast<std::size_t>(texture->image - m_data->images);
+        int& slot = m_imageToTexture[imageIndex];
+        if (slot == -1) {
+            std::optional<ImageData> image = loadImage(*texture->image, m_path);
+            if (image) {
+                slot = static_cast<int>(m_model.textures.size());
+                m_model.textures.push_back(std::move(*image));
+            } else {
+                slot = -2;
+            }
+        }
+        return slot >= 0 ? slot : -1;
+    }
+
+public:
+    GltfBuilder(const cgltf_data* data, const std::string& path)
+        : m_data(data), m_path(path), m_imageToTexture(data->images_count, -1)
+    {
+    }
+
+    void addPrimitive(const cgltf_primitive& prim, const glm::mat4& world)
+    {
+        const cgltf_accessor* positions = findAttribute(prim, cgltf_attribute_type_position);
+        if (prim.type != cgltf_primitive_type_triangles || !positions)
+            return;
+        const cgltf_accessor* normals = findAttribute(prim, cgltf_attribute_type_normal);
+        const cgltf_accessor* uvs = findAttribute(prim, cgltf_attribute_type_texcoord);
+        const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(world)));
+
+        MeshData mesh;
+        mesh.vertices.reserve(positions->count);
+        for (cgltf_size i = 0; i < positions->count; ++i) {
+            Vertex v{};
+            cgltf_accessor_read_float(positions, i, glm::value_ptr(v.position), 3);
+            v.position = glm::vec3(world * glm::vec4(v.position, 1.0f));
+            if (normals) {
+                cgltf_accessor_read_float(normals, i, glm::value_ptr(v.normal), 3);
+                v.normal = glm::normalize(normalMatrix * v.normal);
+            }
+            if (uvs)
+                cgltf_accessor_read_float(uvs, i, glm::value_ptr(v.uv), 2);
+            mesh.vertices.push_back(v);
+        }
+
+        if (prim.indices) {
+            mesh.indices.reserve(prim.indices->count);
+            for (cgltf_size i = 0; i < prim.indices->count; ++i)
+                mesh.indices.push_back(static_cast<std::uint32_t>(cgltf_accessor_read_index(prim.indices, i)));
+        } else {
+            for (cgltf_size i = 0; i < positions->count; ++i)
+                mesh.indices.push_back(static_cast<std::uint32_t>(i));
+        }
+
+        mesh.texture = textureFor(prim.material);
+        m_model.meshes.push_back(std::move(mesh));
+    }
+
+    ModelData take() { return std::move(m_model); }
+};
+
+}
+
+std::optional<ModelData> loadGltf(const std::string& path)
 {
     cgltf_options options{};
     cgltf_data* data = nullptr;
@@ -86,7 +126,7 @@ std::optional<MeshData> loadGltf(const std::string& path)
         return std::nullopt;
     }
 
-    MeshData mesh;
+    GltfBuilder builder(data, path);
     for (cgltf_size n = 0; n < data->nodes_count; ++n) {
         const cgltf_node& node = data->nodes[n];
         if (!node.mesh)
@@ -94,15 +134,14 @@ std::optional<MeshData> loadGltf(const std::string& path)
         float world[16];
         cgltf_node_transform_world(&node, world);
         for (cgltf_size p = 0; p < node.mesh->primitives_count; ++p)
-            appendPrimitive(node.mesh->primitives[p], glm::make_mat4(world), mesh);
+            builder.addPrimitive(node.mesh->primitives[p], glm::make_mat4(world));
     }
-
-    mesh.baseColor = loadBaseColor(data, path);
-
     cgltf_free(data);
-    if (mesh.indices.empty()) {
+
+    ModelData model = builder.take();
+    if (model.meshes.empty()) {
         std::fprintf(stderr, "No triangle meshes in %s\n", path.c_str());
         return std::nullopt;
     }
-    return mesh;
+    return model;
 }

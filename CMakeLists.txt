@@ -1,31 +1,33 @@
 cmake_minimum_required(VERSION 3.24)
-project(opengl_renderer LANGUAGES C CXX)
+project(renderer LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-if(NOT CMAKE_BUILD_TYPE)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-find_package(OpenGL REQUIRED)
-find_package(SDL3 REQUIRED CONFIG)
-find_package(glm REQUIRED)
-
-# glad2 loader, generated at configure time (needs python3 + jinja2)
 include(FetchContent)
-FetchContent_Declare(glad
-    GIT_REPOSITORY https://github.com/Dav1dde/glad.git
-    GIT_TAG v2.0.8
-    GIT_SHALLOW TRUE
-    SOURCE_SUBDIR cmake)
-FetchContent_MakeAvailable(glad)
-# GL 4.3 core: Intel HD 4600 (Haswell) on Windows tops out at 4.3; needed for multi-draw indirect
-glad_add_library(glad_gl_core_43 REPRODUCIBLE API gl:core=4.3)
 
-# Model loaders. SOURCE_SUBDIR points at a missing dir so their own
-# CMakeLists (tests etc.) are skipped; we build the sources ourselves.
+# SDL3 and glm use an installed package if found, otherwise they are downloaded.
+# A downloaded SDL3 is built static so no DLL has to sit next to the executable.
+set(SDL_SHARED OFF CACHE BOOL "")
+set(SDL_STATIC ON CACHE BOOL "")
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "")
+FetchContent_Declare(SDL3
+    GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+    GIT_TAG release-3.4.20
+    GIT_SHALLOW TRUE
+    FIND_PACKAGE_ARGS CONFIG)
+FetchContent_Declare(glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.3
+    GIT_SHALLOW TRUE
+    FIND_PACKAGE_ARGS)
+
+# SOURCE_SUBDIR points at a missing dir so their own CMakeLists are skipped
 FetchContent_Declare(cgltf
     GIT_REPOSITORY https://github.com/jkuhlmann/cgltf.git
     GIT_TAG v1.15
@@ -36,11 +38,26 @@ FetchContent_Declare(ufbx
     GIT_TAG v0.23.1
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR none)
-# stb has no releases; pinned to a commit
 FetchContent_Declare(stb
     URL https://github.com/nothings/stb/archive/6b5799bae8a1fe3792691ef4b72ae26434c3e799.tar.gz
     SOURCE_SUBDIR none)
-FetchContent_MakeAvailable(cgltf ufbx stb)
+FetchContent_Declare(imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG v1.93.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR none)
+
+FetchContent_Declare(EnTT
+    GIT_REPOSITORY https://github.com/skypjack/entt.git
+    GIT_TAG v4.0.0
+    GIT_SHALLOW TRUE)
+
+FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb imgui EnTT)
+
+# glad 2.0.8, GL 4.3 core, no extensions. Regenerate with:
+#   python -m glad --api "gl:core=4.3" --extensions "" --reproducible --out-path src/third_party/glad c
+add_library(glad STATIC src/third_party/glad/src/gl.c)
+target_include_directories(glad SYSTEM PUBLIC src/third_party/glad/include)
 
 add_library(cgltf STATIC src/third_party/cgltf_impl.c)
 target_include_directories(cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
@@ -51,28 +68,68 @@ target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
 add_library(stb_image STATIC src/third_party/stb_image_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
 
-add_executable(renderer src/main.cpp
-        src/scene/Camera.cpp
-        src/scene/Camera.h
-        src/scene/Transform.cpp
-        src/scene/Transform.h
-        src/gfx/Vertex.h
-        src/gfx/DrawCommand.h
-        src/gfx/GeometryBuffer.cpp
-        src/gfx/GeometryBuffer.h
-        src/gfx/IndirectBuffer.cpp
-        src/gfx/IndirectBuffer.h
+add_library(imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
+target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_link_libraries(imgui PUBLIC SDL3::SDL3)
+
+add_executable(${PROJECT_NAME}
+        src/main.cpp
+        src/app/App.cpp
+        src/app/App.h
+        src/app/CameraController.cpp
+        src/app/CameraController.h
+        src/app/DebugUi.cpp
+        src/app/DebugUi.h
+        src/assets/FbxLoader.cpp
+        src/assets/FbxLoader.h
         src/assets/GltfLoader.cpp
         src/assets/GltfLoader.h
         src/assets/Image.cpp
         src/assets/Image.h
+        src/assets/Model.cpp
+        src/assets/Model.h
+        src/core/Paths.cpp
+        src/core/Paths.h
+        src/gfx/DrawCommand.h
         src/gfx/DrawData.h
+        src/gfx/GeometryBuffer.cpp
+        src/gfx/GeometryBuffer.h
+        src/gfx/IndirectBuffer.cpp
+        src/gfx/IndirectBuffer.h
+        src/gfx/Shader.cpp
+        src/gfx/Shader.h
         src/gfx/TextureArray.cpp
         src/gfx/TextureArray.h
-        src/app/CameraController.cpp
-        src/app/CameraController.h)
-target_link_libraries(renderer PRIVATE glad_gl_core_43 cgltf ufbx stb_image SDL3::SDL3 glm::glm OpenGL::GL)
-target_compile_definitions(renderer PRIVATE
-        SHADER_DIR="${CMAKE_SOURCE_DIR}/shaders/"
-        ASSET_DIR="${CMAKE_SOURCE_DIR}/assets/")
-target_compile_options(renderer PRIVATE -Wall -Wextra -Wpedantic)
+        src/gfx/Vertex.h
+        src/render/Renderer.cpp
+        src/render/Renderer.h
+        src/scene/Camera.cpp
+        src/scene/Camera.h
+        src/scene/Components.h
+        src/scene/Transform.cpp
+        src/scene/Transform.h)
+target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_link_libraries(${PROJECT_NAME} PRIVATE glad cgltf ufbx stb_image imgui EnTT::EnTT SDL3::SDL3 glm::glm)
+target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
+target_compile_options(${PROJECT_NAME} PRIVATE
+        "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,/W4;/permissive-,-Wall;-Wextra;-Wpedantic>")
+
+# shaders/ and assets/ are copied next to the executable on every build and loaded
+# from there, except in Debug, which reads the source tree (DEV_RESOURCE_DIR above)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
+    set(COPY_DIR_CMD copy_directory_if_different)
+else()
+    set(COPY_DIR_CMD copy_directory)
+endif()
+add_custom_target(copy_resources ALL
+        COMMAND ${CMAKE_COMMAND} -E ${COPY_DIR_CMD} ${CMAKE_SOURCE_DIR}/shaders $<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders
+        COMMAND ${CMAKE_COMMAND} -E ${COPY_DIR_CMD} ${CMAKE_SOURCE_DIR}/assets $<TARGET_FILE_DIR:${PROJECT_NAME}>/assets
+        COMMENT "Copying shaders and assets")
+add_dependencies(${PROJECT_NAME} copy_resources)

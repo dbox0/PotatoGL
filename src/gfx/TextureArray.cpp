@@ -2,22 +2,15 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <vector>
 
-TextureArray::TextureArray(GLsizei width, GLsizei height, GLsizei maxLayers)
-    : m_width(width), m_height(height), m_maxLayers(maxLayers)
+TextureArray::TextureArray(GLsizei width, GLsizei height, GLsizei layerCapacity)
+    : m_width(width),
+      m_height(height),
+      m_levels(static_cast<GLsizei>(std::floor(std::log2(std::max(width, height)))) + 1),
+      m_layerCapacity(std::max(layerCapacity, 1))
 {
-    const auto levels = static_cast<GLsizei>(std::floor(std::log2(std::max(width, height)))) + 1;
-
-    glGenTextures(1, &m_texture);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, m_texture);
-    glTexStorage3D(GL_TEXTURE_2D_ARRAY, levels, GL_RGBA8, width, height, maxLayers);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    m_texture = createTexture(m_layerCapacity);
 
     glGenFramebuffers(1, &m_readFbo);
     glGenFramebuffers(1, &m_drawFbo);
@@ -33,12 +26,38 @@ TextureArray::~TextureArray()
     glDeleteFramebuffers(2, fbos);
 }
 
+GLuint TextureArray::createTexture(GLsizei layers) const
+{
+    GLuint texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, texture);
+    glTexStorage3D(GL_TEXTURE_2D_ARRAY, m_levels, GL_SRGB8_ALPHA8, m_width, m_height, layers);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    return texture;
+}
+
+void TextureArray::grow()
+{
+    const GLsizei capacity = m_layerCapacity * 2;
+    const GLuint texture = createTexture(capacity);
+    for (GLsizei level = 0; level < m_levels; ++level) {
+        glCopyImageSubData(m_texture, GL_TEXTURE_2D_ARRAY, level, 0, 0, 0,
+                           texture, GL_TEXTURE_2D_ARRAY, level, 0, 0, 0,
+                           std::max(m_width >> level, 1), std::max(m_height >> level, 1), m_layerCount);
+    }
+    glDeleteTextures(1, &m_texture);
+    m_texture = texture;
+    m_layerCapacity = capacity;
+}
+
 GLuint TextureArray::addLayer(GLsizei width, GLsizei height, const unsigned char* rgba)
 {
-    if (m_layerCount >= m_maxLayers) {
-        std::fprintf(stderr, "TextureArray full: using fallback layer\n");
-        return 0;
-    }
+    if (m_layerCount >= m_layerCapacity)
+        grow();
     const GLsizei layer = m_layerCount++;
 
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -54,7 +73,7 @@ GLuint TextureArray::addLayer(GLsizei width, GLsizei height, const unsigned char
     GLuint temp;
     glGenTextures(1, &temp);
     glBindTexture(GL_TEXTURE_2D, temp);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glBindTexture(GL_TEXTURE_2D, 0);
 

@@ -47,6 +47,9 @@ void CameraController::update(float dt, Camera& camera)
     transform.setRot(glm::angleAxis(m_yaw, glm::vec3(0.0f, 1.0f, 0.0f))
                      * glm::angleAxis(m_pitch, glm::vec3(1.0f, 0.0f, 0.0f)));
 
+    if (!m_keyboardEnabled)
+        return;
+
     const bool* keys = SDL_GetKeyboardState(nullptr);
     glm::vec3 move(0.0f);
     if (keys[SDL_SCANCODE_W]) move += transform.forward();

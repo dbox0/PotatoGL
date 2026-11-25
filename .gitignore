@@ -24,6 +24,7 @@ build.ninja
 # Compiled objects and binaries
 *.o
 *.obj
+!assets/**/*.obj
 *.a
 *.lib
 *.so
@@ -47,8 +48,8 @@ build.ninja
 
 # Debug/profiling captures
 *.rdc
-core
-core.*
+/core
+/core.*
 vgcore.*
 imgui.ini
 
