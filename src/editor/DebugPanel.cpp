@@ -32,9 +32,7 @@ void DebugPanel::draw(const OverlayContext& context)
     Camera& camera = context.camera;
     CameraController& controller = context.controller;
 
-    ImGui::SetNextWindowPos(ImVec2(10.0f, 10.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(340.0f, 0.0f), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Debug (F1)")) {
+    if (ImGui::Begin("Debug")) {
         const ImGuiIO& io = ImGui::GetIO();
         ImGui::Text("%.1f FPS  %.2f ms", io.Framerate, 1000.0f / io.Framerate);
         ImGui::TextDisabled("%s", m_glRenderer.c_str());
@@ -42,7 +40,7 @@ void DebugPanel::draw(const OverlayContext& context)
         if (ImGui::Checkbox("VSync", &m_vsync))
             SDL_GL_SetSwapInterval(m_vsync ? 1 : 0);
 
-        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Editor Camera", ImGuiTreeNodeFlags_DefaultOpen)) {
             const glm::vec3 pos = camera.getTransform().getPos();
             ImGui::Text("Position %.2f %.2f %.2f", pos.x, pos.y, pos.z);
             float fov = camera.getFovDeg();

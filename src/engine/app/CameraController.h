@@ -15,6 +15,7 @@ private:
     float m_sprintMultiplier = 3.0f;
     float m_mouseSensitivity = 0.002f;  // radians per pixel
 
+    SDL_MouseButtonFlags m_lookButtonMask = SDL_BUTTON_LMASK | SDL_BUTTON_RMASK;
     SDL_MouseButtonFlags m_lookButtons = 0;
     bool m_keyboardEnabled = true;
     float m_mouseDx = 0.0f;  // accumulated since last update
@@ -28,6 +29,7 @@ public:
     void syncFrom(const Camera& camera);
 
     void setKeyboardEnabled(bool enabled)   { m_keyboardEnabled = enabled; }
+    void setLookButtons(SDL_MouseButtonFlags mask) { m_lookButtonMask = mask; }
     bool isLooking() const                  { return m_lookButtons != 0; }
 
     float getMoveSpeed() const              { return m_moveSpeed; }

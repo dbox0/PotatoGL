@@ -1,7 +1,5 @@
 #include "InspectorPanel.h"
 
-#include "editor/EditorLayout.h"
-
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Scene.h"
 
@@ -65,15 +63,8 @@ static bool drawField(const FieldInfo& field, void* data)
 
 void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, entt::entity selected)
 {
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    const float top = viewport->WorkSize.y * HierarchyHeightFraction;
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y + top),
-                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowSize(ImVec2(SidebarWidth, viewport->WorkSize.y - top), ImGuiCond_Always);
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
-
     entt::registry& registry = scene.registry();
-    if (ImGui::Begin("Inspector", nullptr, flags)) {
+    if (ImGui::Begin("Inspector")) {
         if (selected == entt::null || !registry.valid(selected)) {
             ImGui::TextDisabled("Nothing selected");
         } else {

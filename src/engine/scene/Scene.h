@@ -6,6 +6,7 @@
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,10 @@ public:
     bool isAncestor(entt::entity ancestor, entt::entity e) const;
 
     void updateWorldTransforms();
+
+    // First CameraComponent not tagged Disabled; uses WorldTransform, so update those first
+    entt::entity gameCamera() const;
+    std::optional<glm::mat4> gameCameraViewProj(float aspect) const;
 
     // For structural changes that aren't safe mid-iteration (spawning, reparenting)
     template<typename F>

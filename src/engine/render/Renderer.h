@@ -4,6 +4,8 @@
 #include "engine/gfx/DrawData.h"
 #include "engine/gfx/GeometryBuffer.h"
 #include "engine/gfx/IndirectBuffer.h"
+#include "engine/gfx/PickBuffer.h"
+#include "engine/gfx/RenderTarget.h"
 #include "engine/gfx/Shader.h"
 #include "engine/gfx/TextureArray.h"
 #include "engine/scene/Camera.h"
@@ -54,6 +56,9 @@ private:
     IndirectBuffer m_indirect;
     TextureArray m_textures;
     Shader m_shader;
+    Shader m_pickShader;
+    Shader m_outlineShader;
+    GLuint m_emptyVao = 0;  // the fullscreen triangle has no attributes, but core needs a VAO
     GLuint m_drawSsbo = 0;
     GLsizeiptr m_drawSsboCapacity = 0;
 
@@ -76,6 +81,9 @@ private:
     bool m_mipsDirty = true;
 
     GLint m_viewProjLocation = -1;
+    GLint m_pickViewProjLocation = -1;
+    GLint m_outlineColorLocation = -1;
+    GLint m_outlineWidthLocation = -1;
     std::chrono::steady_clock::time_point m_lastShaderPoll;
 #ifdef NDEBUG
     bool m_shaderAutoReload = false;
@@ -84,8 +92,10 @@ private:
 #endif
 
     explicit Renderer(const Config& config);
-    void onShaderLoaded();
+    void onShadersLoaded();
     void uploadDraws();
+    void prepare();
+    void drawScene() const;
 
 public:
     // Returns nullptr if the shaders fail to load
@@ -97,17 +107,27 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     ModelId addModel(const ModelData& model);
-    void addInstance(ModelId model, const glm::mat4& transform);
+    void addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId = PickBuffer::NoId,
+                     bool highlight = false);
     void clearInstances();
 
-    void setViewport(int width, int height);
-    void render(const Camera& camera);
+    // target = nullptr draws to the window's framebuffer at width x height
+    void render(const glm::mat4& viewProj, const RenderTarget* target, int width, int height);
+    void render(const glm::mat4& viewProj, const RenderTarget& target)
+    {
+        render(viewProj, &target, target.width(), target.height());
+    }
+
+    // Entity ids and highlight flags for picking and outlines
+    void renderIds(const glm::mat4& viewProj, const PickBuffer& target);
+    // Draws over target around every highlighted pixel of ids (same size); color is linear
+    void drawOutline(const RenderTarget& target, const PickBuffer& ids, const glm::vec4& color, int width);
 
     void reloadShaders();
     void pollShaderChanges();  // cheap to call every frame, checks file times twice a second
     void setShaderAutoReload(bool enabled) { m_shaderAutoReload = enabled; }
     bool shaderAutoReload() const          { return m_shaderAutoReload; }
-    const std::string& shaderError() const { return m_shader.lastError(); }
+    const std::string& shaderError() const;
 
     Stats stats() const;
 };

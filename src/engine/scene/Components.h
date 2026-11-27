@@ -29,6 +29,21 @@ struct Relationship
     std::size_t childCount = 0;
 };
 
+// The game view renders through the first enabled one; the editor has its own camera
+struct CameraComponent
+{
+    float fovDeg = 60.0f;
+    float nearPlane = 0.1f;
+    float farPlane = 100.0f;
+    bool orthographic = false;
+    float orthoHeight = 10.0f;
+
+    glm::mat4 projection(float aspect) const
+    {
+        return makeProjection(orthographic, glm::radians(fovDeg), orthoHeight, aspect, nearPlane, farPlane);
+    }
+};
+
 struct WorldTransform
 {
     glm::mat4 matrix = glm::mat4(1.0f);
@@ -37,3 +52,4 @@ struct WorldTransform
 // Tags: empty types, EnTT stores no data for them
 struct Disabled {};  // skipped by gameplay systems and scripts
 struct Dead {};      // destroyed at the end of the gameplay step
+struct Selected {};  // editor selection; it and its descendants get an outline. Never saved.

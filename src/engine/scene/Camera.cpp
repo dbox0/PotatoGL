@@ -6,10 +6,25 @@
 
 #include <glm/gtc/matrix_transform.hpp>
 
+glm::mat4 makeProjection(bool orthographic, float fovRad, float orthoHeight, float aspect, float zNear, float zFar)
+{
+    const float halfH = orthoHeight * 0.5f;
+    const float halfW = halfH * aspect;
+    return orthographic ? glm::ortho(-halfW, halfW, -halfH, halfH, zNear, zFar)
+                        : glm::perspective(fovRad, aspect, zNear, zFar);
+}
+
+glm::mat4 viewFromWorld(const glm::mat4& world)
+{
+    const glm::mat3 rot(glm::normalize(glm::vec3(world[0])), glm::normalize(glm::vec3(world[1])),
+                        glm::normalize(glm::vec3(world[2])));
+    const glm::mat3 inv = glm::transpose(rot);
+    glm::mat4 view(inv);
+    view[3] = glm::vec4(-(inv * glm::vec3(world[3])), 1.0f);
+    return view;
+}
+
 glm::mat4 Camera::getProjection() const
 {
-    float halfH = m_orthoHeight*0.5f;
-    float halfW = halfH * m_aspect;
-    return m_orthographic? glm::ortho(-halfW,halfW,-halfH,halfH,m_near,m_far) :
-            glm::perspective(m_fovRad,m_aspect,m_near,m_far);
+    return makeProjection(m_orthographic, m_fovRad, m_orthoHeight, m_aspect, m_near, m_far);
 }

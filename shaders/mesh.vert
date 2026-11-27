@@ -7,6 +7,8 @@ layout(location = 3) in uint aDrawId;
 struct DrawData {
     vec4 rows[3];  // top three rows of the affine model matrix
     uint textureLayer;
+    uint entityId;
+    uint highlight;
 };
 
 layout(std430, binding = 0) readonly buffer Draws {
@@ -18,6 +20,7 @@ uniform mat4 uViewProj;
 out vec3 vNormal;
 out vec2 vUv;
 flat out uint vTextureLayer;
+flat out uvec2 vEntity;  // entityId, highlight
 
 void main() {
     DrawData draw = draws[aDrawId];
@@ -30,5 +33,6 @@ void main() {
 
     vUv = aUv;
     vTextureLayer = draw.textureLayer;
+    vEntity = uvec2(draw.entityId, draw.highlight);
     gl_Position = uViewProj * vec4(model * vec4(aPos, 1.0), 1.0);
 }

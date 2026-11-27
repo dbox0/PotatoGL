@@ -1,6 +1,10 @@
 #pragma once
 #include "Transform.h"
 
+glm::mat4 makeProjection(bool orthographic, float fovRad, float orthoHeight, float aspect, float zNear, float zFar);
+// Inverse of a world matrix, ignoring its scale
+glm::mat4 viewFromWorld(const glm::mat4& world);
+
 
 class Camera
 {

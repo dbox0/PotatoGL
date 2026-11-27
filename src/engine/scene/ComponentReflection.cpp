@@ -39,5 +39,12 @@ void registerSceneComponents(ComponentRegistry& components)
             nullptr)
         .addable = false;  // needs a ModelId, so only code can add one
 
+    components.add<CameraComponent>("Camera")
+        .field<&CameraComponent::fovDeg>("FOV", 0.5f)
+        .field<&CameraComponent::nearPlane>("Near", 0.01f)
+        .field<&CameraComponent::farPlane>("Far", 1.0f)
+        .field<&CameraComponent::orthographic>("Orthographic")
+        .field<&CameraComponent::orthoHeight>("Ortho height", 0.1f);
+
     components.add<Disabled>("Disabled");
 }

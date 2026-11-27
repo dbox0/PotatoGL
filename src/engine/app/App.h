@@ -3,6 +3,7 @@
 #include "engine/app/CameraController.h"
 #include "engine/app/Game.h"
 #include "engine/app/Overlay.h"
+#include "engine/app/PlayMode.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
@@ -24,12 +25,20 @@ private:
     std::unique_ptr<Overlay> m_overlay;
     std::unique_ptr<Game> m_game;
     Scene m_scene;
+    PlayMode m_playMode = PlayMode::Play;
+    int m_fbWidth = 1;
+    int m_fbHeight = 1;
     bool m_running = false;
 
     void handleEvent(const SDL_Event& event);
     void onResize(int width, int height);
     GameContext gameContext() { return {*m_renderer, m_scene, m_camera, m_components}; }
+    OverlayContext overlayContext()
+    {
+        return {*m_renderer, m_scene, m_camera, m_controller, m_components, m_playMode};
+    }
     void syncRenderInstances();
+    void renderToWindow();
 
 public:
     App() = default;

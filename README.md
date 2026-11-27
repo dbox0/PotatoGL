@@ -10,7 +10,8 @@ Minimum target is Intel HD Graphics 4600 (Haswell), which tops out at GL 4.3 on 
 - glTF (`.gltf`/`.glb`) via cgltf, FBX/OBJ via ufbx, images via stb_image
 - Gameplay as C++ systems, plus Unity-style scripts stored as components
   (see [docs/Scripting.md](docs/Scripting.md))
-- Optional Dear ImGui editor: debug stats, scene hierarchy, inspector
+- Optional Dear ImGui docking editor: Scene and Game views, Play/Pause, hierarchy,
+  inspector, debug stats
 - Shader hot reload in Debug builds; GPU buffers grow on demand
 
 ## Building
@@ -39,15 +40,23 @@ hot reloads it. A shader that fails to compile keeps the previous program runnin
 
 | Input | Action |
 | --- | --- |
-| W A S D | Move |
-| Q / E | Up / down |
-| Left Shift | Sprint |
-| Hold left or right mouse | Look |
-| F1 | Toggle editor |
+| Hold right mouse | Look, and fly with W A S D, Q / E up / down, Left Shift sprint (Scene view) |
+| Left click | Select (Scene view); empty space clears the selection |
+| Q / W / E / R | No gizmo / move / rotate / scale (Scene view) |
+| X | Gizmo in local / global space |
+| Hold Ctrl while dragging | Snap: 0.5 units, 15 degrees, 0.1 scale |
+| Delete | Remove the selection (Scene view or Hierarchy) |
+| F1 | Toggle editor; hidden, the game camera fills the window |
 | Esc | Quit |
 
-Editor:
+Editor (panels dock anywhere; the layout is saved to `imgui.ini`):
 
+- **Play / Pause** (top bar): the editor starts in Edit mode, where the game doesn't
+  update. Play runs it and focuses the Game view, which then gets keyboard input.
+  Stop returns to Edit mode but keeps the scene as it is for now.
+- **Scene** view: the free editor camera. The selection (and its children) gets an
+  orange outline and a transform gizmo. **Game** view: the first entity with a
+  `Camera` component (Gameplay creates *Main Camera*).
 - **Scene Hierarchy** (top right): click to select, drag onto another object to
   reparent, drag into empty space to move to the top level, right-click for
   Create / Delete, `Delete` key removes the selection.
@@ -66,7 +75,7 @@ src/
     app/         App (window, loop), CameraController, Game and Overlay interfaces
     assets/      file loaders producing ModelData / ImageData, no GL
     core/        Paths: resourcePath()
-    gfx/         thin GL wrappers: buffers, texture array, shaders
+    gfx/         thin GL wrappers: buffers, texture array, shaders, render targets
     reflect/     ComponentRegistry: runtime component/field descriptions for tools
     render/      Renderer: owns GPU buffers, uploads models, draws the scene
     scene/       Scene (registry + hierarchy), Transform, Camera, engine components
@@ -87,7 +96,8 @@ out or left away (e.g. a shipping build without the editor).
 ## Frame
 
 ```
-events -> editor UI -> camera -> game update -> world transforms -> render sync -> draw -> editor draw
+events -> editor UI -> camera -> game update (Play only) -> world transforms -> render sync
+       -> draw Scene/Game views (or the game camera to the window) -> editor draw
 ```
 
 Game update runs scripts' `onUpdate`, then a fixed 60 Hz step (systems, `onFixedUpdate`,

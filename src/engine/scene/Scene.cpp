@@ -1,5 +1,6 @@
 #include "Scene.h"
 
+#include "engine/scene/Camera.h"
 #include "engine/scene/Transform.h"
 
 Scene::Scene()
@@ -111,6 +112,21 @@ bool Scene::isAncestor(entt::entity ancestor, entt::entity e) const
 void Scene::updateWorldTransforms()
 {
     forEachChild(m_root, [this](entt::entity e) { updateWorld(e, glm::mat4(1.0f)); });
+}
+
+entt::entity Scene::gameCamera() const
+{
+    auto cameras = m_registry.view<CameraComponent, WorldTransform>(entt::exclude<Disabled>);
+    return cameras.begin() == cameras.end() ? entt::null : *cameras.begin();
+}
+
+std::optional<glm::mat4> Scene::gameCameraViewProj(float aspect) const
+{
+    const entt::entity e = gameCamera();
+    if (e == entt::null)
+        return std::nullopt;
+    const auto& camera = m_registry.get<CameraComponent>(e);
+    return camera.projection(aspect) * viewFromWorld(m_registry.get<WorldTransform>(e).matrix);
 }
 
 void Scene::updateWorld(entt::entity e, const glm::mat4& parentWorld)

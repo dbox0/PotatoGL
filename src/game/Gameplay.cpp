@@ -54,6 +54,11 @@ bool Gameplay::init(const GameContext& context)
         }
     }
 
+    const entt::entity mainCamera = scene.createGameObject("Main Camera");
+    registry.get<Transform>(mainCamera).setPos({0.0f, 12.0f, 22.0f});
+    registry.get<Transform>(mainCamera).lookAt({0.0f, 0.0f, 0.0f});
+    registry.emplace<CameraComponent>(mainCamera);
+
     context.camera.getTransform().setPos({0.0f, 12.0f, 22.0f});
     context.camera.getTransform().lookAt({0.0f, 0.0f, 0.0f});
     return true;

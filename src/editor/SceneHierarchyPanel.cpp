@@ -1,7 +1,5 @@
 #include "SceneHierarchyPanel.h"
 
-#include "editor/EditorLayout.h"
-
 #include "engine/scene/Scene.h"
 
 #include <imgui.h>
@@ -11,18 +9,18 @@
 
 static constexpr const char* EntityPayload = "SCENE_ENTITY";
 
-void SceneHierarchyPanel::draw(Scene& scene)
+void SceneHierarchyPanel::draw(Scene& scene, entt::entity& selected)
 {
-    if (m_selected != entt::null && !scene.registry().valid(m_selected))
-        m_selected = entt::null;
+    m_selected = &selected;
+    if (*m_selected != entt::null && !scene.registry().valid(*m_selected))
+        *m_selected = entt::null;
 
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x, viewport->WorkPos.y),
-                            ImGuiCond_Always, ImVec2(1.0f, 0.0f));
-    ImGui::SetNextWindowSize(ImVec2(SidebarWidth, viewport->WorkSize.y * HierarchyHeightFraction), ImGuiCond_Always);
-    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    // Opens the tree down to a selection made elsewhere (e.g. picked in the Scene view)
+    const bool reveal = *m_selected != m_revealed && *m_selected != entt::null;
+    m_revealed = *m_selected;
+    m_reveal = reveal;
 
-    if (ImGui::Begin("Scene Hierarchy", nullptr, flags)) {
+    if (ImGui::Begin("Scene Hierarchy")) {
         scene.forEachChild(scene.root(), [&](entt::entity e) { drawNode(scene, e); });
 
         // Empty space below the tree: drop here to move to the top level
@@ -36,7 +34,7 @@ void SceneHierarchyPanel::draw(Scene& scene)
             ImGui::EndDragDropTarget();
         }
         if (ImGui::IsItemClicked())
-            m_selected = entt::null;
+            *m_selected = entt::null;
 
         if (ImGui::BeginPopupContextWindow("HierarchyContext",
                                            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
@@ -47,8 +45,8 @@ void SceneHierarchyPanel::draw(Scene& scene)
             ImGui::EndPopup();
         }
 
-        if (m_selected != entt::null && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete))
-            m_destroyTarget = m_selected;
+        if (*m_selected != entt::null && ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey_Delete))
+            m_destroyTarget = *m_selected;
     }
     ImGui::End();
 
@@ -64,16 +62,22 @@ void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e)
                                ImGuiTreeNodeFlags_SpanAvailWidth;
     if (!hasChildren)
         flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-    if (e == m_selected)
+    if (e == *m_selected)
         flags |= ImGuiTreeNodeFlags_Selected;
 
     const Name* name = registry.try_get<Name>(e);
     const char* label = name ? name->value.c_str() : "Entity";
     const void* id = reinterpret_cast<const void*>(static_cast<std::uintptr_t>(entt::to_integral(e)));
+    if (m_reveal && hasChildren && scene.isAncestor(e, *m_selected))
+        ImGui::SetNextItemOpen(true);
     const bool open = ImGui::TreeNodeEx(id, flags, "%s", label);
+    if (m_reveal && e == *m_selected)
+        ImGui::SetScrollHereY();
 
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
-        m_selected = e;
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+        *m_selected = e;
+        m_revealed = e;  // picked here, no need to scroll to it
+    }
 
     if (ImGui::BeginDragDropSource()) {
         ImGui::SetDragDropPayload(EntityPayload, &e, sizeof(e));
@@ -89,7 +93,8 @@ void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e)
     }
 
     if (ImGui::BeginPopupContextItem()) {
-        m_selected = e;
+        *m_selected = e;
+        m_revealed = e;
         if (ImGui::MenuItem("Create Child")) {
             m_createRequested = true;
             m_createParent = e;
@@ -113,14 +118,14 @@ void SceneHierarchyPanel::applyPendingEdits(Scene& scene)
         m_reparentTarget = entt::null;
     }
     if (m_createRequested) {
-        m_selected = scene.createGameObject("GameObject", m_createParent);
+        *m_selected = scene.createGameObject("GameObject", m_createParent);
         m_createRequested = false;
         m_createParent = entt::null;
     }
     if (m_destroyTarget != entt::null) {
         scene.destroyRecursive(m_destroyTarget);
-        if (!scene.registry().valid(m_selected))
-            m_selected = entt::null;
+        if (!scene.registry().valid(*m_selected))
+            *m_selected = entt::null;
         m_destroyTarget = entt::null;
     }
 }

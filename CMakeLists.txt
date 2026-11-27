@@ -45,8 +45,12 @@ FetchContent_Declare(stb
     SOURCE_SUBDIR none)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG v1.93.0
+    GIT_TAG v1.93.0-docking
     GIT_SHALLOW TRUE
+    SOURCE_SUBDIR none)
+FetchContent_Declare(imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG 5b473bc30438dc128520b90b688745bca85c4a91
     SOURCE_SUBDIR none)
 
 FetchContent_Declare(EnTT
@@ -90,6 +94,7 @@ add_library(engine STATIC
         src/engine/app/CameraController.h
         src/engine/app/Game.h
         src/engine/app/Overlay.h
+        src/engine/app/PlayMode.h
         src/engine/assets/FbxLoader.cpp
         src/engine/assets/FbxLoader.h
         src/engine/assets/GltfLoader.cpp
@@ -109,6 +114,10 @@ add_library(engine STATIC
         src/engine/gfx/GeometryBuffer.h
         src/engine/gfx/IndirectBuffer.cpp
         src/engine/gfx/IndirectBuffer.h
+        src/engine/gfx/PickBuffer.cpp
+        src/engine/gfx/PickBuffer.h
+        src/engine/gfx/RenderTarget.cpp
+        src/engine/gfx/RenderTarget.h
         src/engine/gfx/Shader.cpp
         src/engine/gfx/Shader.h
         src/engine/gfx/TextureArray.cpp
@@ -135,7 +144,7 @@ target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"
 target_compile_options(engine PRIVATE ${WARNING_FLAGS})
 
 if(BUILD_EDITOR)
-    FetchContent_MakeAvailable(imgui)
+    FetchContent_MakeAvailable(imgui imguizmo)
     add_library(imgui STATIC
             ${imgui_SOURCE_DIR}/imgui.cpp
             ${imgui_SOURCE_DIR}/imgui_demo.cpp
@@ -143,8 +152,9 @@ if(BUILD_EDITOR)
             ${imgui_SOURCE_DIR}/imgui_tables.cpp
             ${imgui_SOURCE_DIR}/imgui_widgets.cpp
             ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl3.cpp
-            ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp)
-    target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+            ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+            ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp)
+    target_include_directories(imgui SYSTEM PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends ${imguizmo_SOURCE_DIR}/src)
     target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
     add_library(editor STATIC
@@ -152,11 +162,14 @@ if(BUILD_EDITOR)
             src/editor/DebugPanel.h
             src/editor/Editor.cpp
             src/editor/Editor.h
-            src/editor/EditorLayout.h
             src/editor/InspectorPanel.cpp
             src/editor/InspectorPanel.h
             src/editor/SceneHierarchyPanel.cpp
-            src/editor/SceneHierarchyPanel.h)
+            src/editor/SceneHierarchyPanel.h
+            src/editor/SceneViewPanel.cpp
+            src/editor/SceneViewPanel.h
+            src/editor/ViewportPanel.cpp
+            src/editor/ViewportPanel.h)
     target_link_libraries(editor PUBLIC engine PRIVATE imgui)
     target_compile_options(editor PRIVATE ${WARNING_FLAGS})
 endif()

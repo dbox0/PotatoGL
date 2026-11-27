@@ -7,7 +7,9 @@ class Scene;
 class SceneHierarchyPanel
 {
 private:
-    entt::entity m_selected = entt::null;
+    entt::entity* m_selected = nullptr;  // the editor's selection, valid during draw()
+    entt::entity m_revealed = entt::null;  // last selection the tree was opened up to
+    bool m_reveal = false;
 
     // Tree edits are deferred until after drawing so the walk never sees a changing hierarchy
     entt::entity m_reparentChild = entt::null;
@@ -20,7 +22,5 @@ private:
     void applyPendingEdits(Scene& scene);
 
 public:
-    void draw(Scene& scene);
-
-    entt::entity selected() const { return m_selected; }
+    void draw(Scene& scene, entt::entity& selected);
 };

@@ -6,6 +6,7 @@
 #include <glad/gl.h>
 
 #include <cstdio>
+#include <optional>
 
 #ifndef NDEBUG
 static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum severity,
@@ -87,6 +88,9 @@ bool App::init(const char* title, int width, int height)
     SDL_GetWindowSizeInPixels(m_window, &fbWidth, &fbHeight);
     onResize(fbWidth, fbHeight);
 
+    m_playMode = m_overlay ? PlayMode::Edit : PlayMode::Play;
+    if (m_overlay)
+        m_controller.setLookButtons(SDL_BUTTON_RMASK);  // left click belongs to picking and gizmos
     m_scene.registry().ctx().emplace<Input>();
     registerSceneComponents(m_components);
     if (m_game && !m_game->init(gameContext()))
@@ -98,24 +102,47 @@ bool App::init(const char* title, int width, int height)
 // Rebuilds every instance each frame until the Renderer gets handle-based instances
 void App::syncRenderInstances()
 {
+    const entt::registry& registry = m_scene.registry();
+    const auto* selected = registry.storage<Selected>();
+    const bool anySelected = selected && !selected->empty();
+
     m_renderer->clearInstances();
-    for (auto [entity, world, mesh] : m_scene.registry().view<WorldTransform, MeshRenderer>().each())
-        m_renderer->addInstance(mesh.model, world.matrix);
+    for (auto [entity, world, mesh] : registry.view<WorldTransform, MeshRenderer>().each()) {
+        bool highlight = false;
+        if (anySelected) {
+            for (entt::entity e = entity; e != entt::null && !highlight; e = registry.get<Relationship>(e).parent)
+                highlight = selected->contains(e);
+        }
+        m_renderer->addInstance(mesh.model, world.matrix, entt::to_integral(entity), highlight);
+    }
+}
+
+// Without a game camera the editor camera stands in
+void App::renderToWindow()
+{
+    const float aspect = static_cast<float>(m_fbWidth) / static_cast<float>(m_fbHeight);
+    std::optional<glm::mat4> viewProj = m_scene.gameCameraViewProj(aspect);
+    if (!viewProj) {
+        m_camera.setAspect(aspect);
+        viewProj = m_camera.getProjection() * m_camera.getView();
+    }
+    m_renderer->render(*viewProj, nullptr, m_fbWidth, m_fbHeight);
 }
 
 void App::onResize(int width, int height)
 {
     if (width <= 0 || height <= 0)
         return;
-    m_renderer->setViewport(width, height);
-    m_camera.setAspect(static_cast<float>(width) / static_cast<float>(height));
+    m_fbWidth = width;
+    m_fbHeight = height;
 }
 
 void App::handleEvent(const SDL_Event& event)
 {
     if (m_overlay)
         m_overlay->processEvent(event);
-    const bool clickOnUi = event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_overlay && m_overlay->wantsMouse();
+    const bool clickOnUi =
+        event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_overlay && !m_overlay->editorCameraInput();
     if (!clickOnUi)
         m_controller.handleEvent(event, m_window);
 
@@ -141,20 +168,28 @@ void App::run()
             handleEvent(event);
 
         if (m_overlay)
-            m_overlay->update({*m_renderer, m_scene, m_camera, m_controller, m_components});
+            m_overlay->update(overlayContext());
 
-        const bool keyboardFree = !(m_overlay && m_overlay->wantsKeyboard());
-        m_controller.setKeyboardEnabled(keyboardFree);
-        m_scene.registry().ctx().get<Input>().update(keyboardFree);
+        // With the editor, WASD only flies while looking (Unity style); otherwise W/E/R pick gizmos
+        m_controller.setKeyboardEnabled(!m_overlay || m_controller.isLooking());
+        m_scene.registry().ctx().get<Input>().update(!m_overlay || m_overlay->gameInput());
         m_controller.update(dt, m_camera);
         m_renderer->pollShaderChanges();
 
-        if (m_game)
+        if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
 
         m_scene.updateWorldTransforms();
         syncRenderInstances();
-        m_renderer->render(m_camera);
+        if (m_overlay && m_overlay->visible()) {
+            m_overlay->renderViews(overlayContext());
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glViewport(0, 0, m_fbWidth, m_fbHeight);
+            glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        } else {
+            renderToWindow();
+        }
         if (m_overlay)
             m_overlay->render();
         SDL_GL_SwapWindow(m_window);

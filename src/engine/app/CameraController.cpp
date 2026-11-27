@@ -12,7 +12,7 @@ void CameraController::handleEvent(const SDL_Event& event, SDL_Window* window)
     switch (event.type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (event.button.button != SDL_BUTTON_LEFT && event.button.button != SDL_BUTTON_RIGHT)
+        if (!(SDL_BUTTON_MASK(event.button.button) & m_lookButtonMask))
             break;
         const bool wasLooking = m_lookButtons != 0;
         if (event.button.down)

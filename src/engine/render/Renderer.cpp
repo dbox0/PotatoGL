@@ -15,6 +15,7 @@ Renderer::Renderer(const Config& config)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_drawSsbo);
     glBufferData(GL_SHADER_STORAGE_BUFFER, m_drawSsboCapacity * sizeof(DrawData), nullptr, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    glGenVertexArrays(1, &m_emptyVao);
 
     glEnable(GL_DEPTH_TEST);
 }
@@ -27,22 +28,38 @@ std::unique_ptr<Renderer> Renderer::create()
 std::unique_ptr<Renderer> Renderer::create(const Config& config)
 {
     std::unique_ptr<Renderer> renderer(new Renderer(config));
-    if (!renderer->m_shader.load(resourcePath("shaders/mesh.vert"), resourcePath("shaders/mesh.frag")))
+    const std::string meshVert = resourcePath("shaders/mesh.vert");
+    if (!renderer->m_shader.load(meshVert, resourcePath("shaders/mesh.frag")) ||
+        !renderer->m_pickShader.load(meshVert, resourcePath("shaders/pick.frag")) ||
+        !renderer->m_outlineShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/outline.frag")))
         return nullptr;
-    renderer->onShaderLoaded();
+    renderer->onShadersLoaded();
     return renderer;
 }
 
 Renderer::~Renderer()
 {
     glDeleteBuffers(1, &m_drawSsbo);
+    glDeleteVertexArrays(1, &m_emptyVao);
 }
 
-void Renderer::onShaderLoaded()
+void Renderer::onShadersLoaded()
 {
     m_shader.use();
     m_shader.setInt("uTextures", 0);
     m_viewProjLocation = m_shader.uniformLocation("uViewProj");
+    m_pickViewProjLocation = m_pickShader.uniformLocation("uViewProj");
+    m_outlineColorLocation = m_outlineShader.uniformLocation("uColor");
+    m_outlineWidthLocation = m_outlineShader.uniformLocation("uWidth");
+}
+
+const std::string& Renderer::shaderError() const
+{
+    if (!m_shader.lastError().empty())
+        return m_shader.lastError();
+    if (!m_pickShader.lastError().empty())
+        return m_pickShader.lastError();
+    return m_outlineShader.lastError();
 }
 
 ModelId Renderer::addModel(const ModelData& model)
@@ -70,13 +87,15 @@ ModelId Renderer::addModel(const ModelData& model)
     return static_cast<ModelId>(m_models.size() - 1);
 }
 
-void Renderer::addInstance(ModelId model, const glm::mat4& transform)
+void Renderer::addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId, bool highlight)
 {
     if (model >= m_models.size())
         return;
     const ModelEntry& entry = m_models[model];
     DrawData draw{};
     draw.setModel(transform);
+    draw.entityId = entityId;
+    draw.highlight = highlight ? 1u : 0u;
     for (std::uint32_t i = 0; i < entry.submeshCount; ++i) {
         const std::uint32_t submesh = entry.firstSubmesh + i;
         draw.textureLayer = m_submeshes[submesh].textureLayer;
@@ -128,12 +147,7 @@ void Renderer::uploadDraws()
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 }
 
-void Renderer::setViewport(int width, int height)
-{
-    glViewport(0, 0, width, height);
-}
-
-void Renderer::render(const Camera& camera)
+void Renderer::prepare()
 {
     if (m_mipsDirty) {
         m_textures.generateMipmaps();
@@ -143,6 +157,23 @@ void Renderer::render(const Camera& camera)
         uploadDraws();
         m_drawsDirty = false;
     }
+}
+
+void Renderer::drawScene() const
+{
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_drawSsbo);
+    m_geometry.bind();
+    m_indirect.draw();
+}
+
+void Renderer::render(const glm::mat4& viewProj, const RenderTarget* target, int width, int height)
+{
+    prepare();
+    if (target)
+        target->bind();
+    else
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
 
     // Only the scene is sRGB-encoded; UI drawn afterwards already has sRGB colors
     glEnable(GL_FRAMEBUFFER_SRGB);
@@ -150,18 +181,54 @@ void Renderer::render(const Camera& camera)
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     m_shader.use();
-    Shader::setMat4(m_viewProjLocation, camera.getProjection() * camera.getView());
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_drawSsbo);
+    Shader::setMat4(m_viewProjLocation, viewProj);
     m_textures.bind(0);
-    m_geometry.bind();
-    m_indirect.draw();
+    drawScene();
     glDisable(GL_FRAMEBUFFER_SRGB);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::renderIds(const glm::mat4& viewProj, const PickBuffer& target)
+{
+    prepare();
+    target.bind();
+    glViewport(0, 0, target.width(), target.height());
+    target.clear();
+    m_pickShader.use();
+    Shader::setMat4(m_pickViewProjLocation, viewProj);
+    drawScene();
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::drawOutline(const RenderTarget& target, const PickBuffer& ids, const glm::vec4& color, int width)
+{
+    target.bind();
+    glViewport(0, 0, target.width(), target.height());
+    glEnable(GL_FRAMEBUFFER_SRGB);
+    glDisable(GL_DEPTH_TEST);
+
+    m_outlineShader.use();
+    glUniform4fv(m_outlineColorLocation, 1, &color.x);
+    glUniform1i(m_outlineWidthLocation, width);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, ids.idTexture());
+    glBindVertexArray(m_emptyVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 void Renderer::reloadShaders()
 {
-    if (m_shader.reload())
-        onShaderLoaded();
+    const bool mesh = m_shader.reload();
+    const bool pick = m_pickShader.reload();
+    const bool outline = m_outlineShader.reload();
+    if (mesh || pick || outline)
+        onShadersLoaded();
 }
 
 void Renderer::pollShaderChanges()
@@ -172,8 +239,11 @@ void Renderer::pollShaderChanges()
     if (now - m_lastShaderPoll < std::chrono::milliseconds(500))
         return;
     m_lastShaderPoll = now;
-    if (m_shader.reloadIfChanged()) {
-        onShaderLoaded();
+    const bool mesh = m_shader.reloadIfChanged();
+    const bool pick = m_pickShader.reloadIfChanged();
+    const bool outline = m_outlineShader.reloadIfChanged();
+    if (mesh || pick || outline) {
+        onShadersLoaded();
         std::printf("Shaders reloaded\n");
     }
 }
