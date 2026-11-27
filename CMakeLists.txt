@@ -194,6 +194,8 @@ if(BUILD_EDITOR)
     target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
     add_library(editor STATIC
+            src/editor/AnimationViewer.cpp
+            src/editor/AnimationViewer.h
             src/editor/AssetOps.cpp
             src/editor/AssetOps.h
             src/editor/DebugPanel.cpp

@@ -41,9 +41,10 @@ private:
     {
         return {*m_renderer, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode, m_animationPreview};
     }
-    void updateAnimators(float dt);
-    void syncRenderInstances();
-    void syncRenderLights();
+    Scene& activeScene();
+    void updateAnimators(Scene& scene, float dt);
+    void syncRenderInstances(Scene& scene);
+    void syncRenderLights(const Scene& scene);
     void renderToWindow();
 
 public:

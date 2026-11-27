@@ -27,6 +27,13 @@ public:
         std::string openScene;
         std::string openPrefab;
         std::string instantiate;  // model or prefab
+        struct Viewer
+        {
+            std::string model;
+            std::string material;
+            std::string clip;
+        };
+        std::optional<Viewer> openAnimationViewer;
         std::vector<std::string> errors;
     };
 

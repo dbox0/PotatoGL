@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/app/Overlay.h"
+#include "editor/AnimationViewer.h"
 #include "editor/DebugPanel.h"
 #include "editor/EditHistory.h"
 #include "editor/InspectorPanel.h"
@@ -37,6 +38,7 @@ private:
     SceneViewPanel m_sceneView;
     ViewportPanel m_gameView{"Game"};
     ThumbnailCache m_thumbnails;
+    AnimationViewer m_viewer;  // while open it replaces the scene UI
     SceneDialogs m_dialogs;
     bool m_selectSceneTab = true;  // the Scene view is the tab shown at startup
     bool m_resetLayout = false;
@@ -145,6 +147,10 @@ private:
     void createSceneAsset(const OverlayContext& context, const std::filesystem::path& folder);
     void createPrefab(const OverlayContext& context, entt::entity e, const std::filesystem::path& folder);
 
+    void openAnimationViewer(const OverlayContext& context, const std::string& model, const std::string& material,
+                             const std::string& clip);
+    void updateViewer(const OverlayContext& context);
+
     void setStatus(std::string message);
     void updateTitle(const OverlayContext& context);
 
@@ -162,6 +168,7 @@ public:
     bool editorCameraInput() const override;
     bool gameInput() const override;
     bool visible() const override { return m_visible; }
+    Scene* activeScene() override { return m_viewer.isOpen() ? m_viewer.scene() : nullptr; }
     bool confirmQuit() override;
     bool quitRequested() const override { return m_quitNow; }
 

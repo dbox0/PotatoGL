@@ -103,10 +103,16 @@ bool App::init(const char* title, int width, int height)
     return true;
 }
 
-// Rebuilds every instance each frame until the Renderer gets handle-based instances
-void App::syncRenderInstances()
+Scene& App::activeScene()
 {
-    entt::registry& registry = m_scene.registry();
+    Scene* scene = m_overlay && m_overlay->visible() ? m_overlay->activeScene() : nullptr;
+    return scene ? *scene : m_scene;
+}
+
+// Rebuilds every instance each frame until the Renderer gets handle-based instances
+void App::syncRenderInstances(Scene& scene)
+{
+    entt::registry& registry = scene.registry();
     const auto* selected = std::as_const(registry).storage<Selected>();
     const bool anySelected = selected && !selected->empty();
 
@@ -146,8 +152,9 @@ void App::syncRenderInstances()
     }
 }
 
-// Edit mode only animates with Preview on; entering Play starts every Animator over
-void App::updateAnimators(float dt)
+// Edit mode only animates with Preview on; entering Play starts every Animator over.
+// An overlay's scene is only evaluated: it sets its Animators' times itself.
+void App::updateAnimators(Scene& scene, float dt)
 {
     if (m_playMode != PlayMode::Edit && m_lastPlayMode == PlayMode::Edit)
         resetAnimation(m_scene);
@@ -157,14 +164,16 @@ void App::updateAnimators(float dt)
         tick = m_animationPreview ? AnimationTick::Preview : AnimationTick::Rest;
     else if (m_playMode == PlayMode::Paused)
         tick = AnimationTick::Hold;
+    if (&scene != &m_scene)
+        tick = AnimationTick::Hold;
     GpuScope scope(m_renderer->profiler(), "Animation");
-    updateAnimation(m_scene, m_assets, *m_renderer, dt, tick);
+    updateAnimation(scene, m_assets, *m_renderer, dt, tick);
 }
 
 // Lights point down their local -Z, like cameras
-void App::syncRenderLights()
+void App::syncRenderLights(const Scene& scene)
 {
-    const entt::registry& registry = m_scene.registry();
+    const entt::registry& registry = scene.registry();
     m_renderer->clearLights();
 
     auto suns = registry.view<WorldTransform, DirectionalLight>();
@@ -250,12 +259,13 @@ void App::run()
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
 
-        updateAnimators(dt);
-        m_scene.updateWorldTransforms();
+        Scene& scene = activeScene();
+        updateAnimators(scene, dt);
+        scene.updateWorldTransforms();
         {
             GpuScope scope(profiler, "Sync instances");
-            syncRenderInstances();
-            syncRenderLights();
+            syncRenderInstances(scene);
+            syncRenderLights(scene);
         }
         // Skinning runs once here, not per view
         m_renderer->beginFrame();

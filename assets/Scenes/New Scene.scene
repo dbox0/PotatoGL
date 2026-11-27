@@ -8,9 +8,9 @@
           "value": "Main Camera"
         },
         "Transform": {
-          "position": [0.0, 2.0, 10.0],
-          "rotation": [-0.09853762, 0.0, 0.0, 0.99513334],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [-2.4674373, 4.1967263, 9.560653],
+          "rotation": [-0.0984979, -0.028262021, 0.0027984995, 0.9947319],
+          "scale": [1.0, 1.0000012, 1.0]
         },
         "Camera": {
           "fovDeg": 60.0,
@@ -35,6 +35,29 @@
         "DirectionalLight": {
           "color": [1.0, 1.0, 1.0],
           "intensity": 1.0
+        }
+      }
+    },
+    {
+      "uuid": "6561ced70ec4d1f6",
+      "components": {
+        "Name": {
+          "value": "RobotExpressive"
+        },
+        "Transform": {
+          "position": [-1.9723886, 0.0, -3.227272],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "SkinnedMeshRenderer": {
+          "mesh": "assets/Characters/RobotExpressive.glb",
+          "material": ""
+        },
+        "Animator": {
+          "clip": "assets/Characters/RobotExpressive.glb#Death",
+          "speed": 1.0,
+          "loop": true,
+          "playOnStart": true
         }
       }
     }

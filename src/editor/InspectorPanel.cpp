@@ -303,6 +303,16 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 ImGui::PopID();
             }
         ImGui::EndDisabled();
+        if (info.id == "SkinnedMeshRenderer") {
+            const SkinnedMeshRenderer& skinned = registry.get<SkinnedMeshRenderer>(e);
+            ImGui::BeginDisabled(!skinned.skeleton);
+            if (ImGui::Button("Open in Animation Viewer", ImVec2(-1.0f, 0.0f))) {
+                const Animator* animator = registry.try_get<Animator>(e);
+                m_requests.openAnimationViewer =
+                    Requests::Viewer{skinned.mesh, skinned.material, animator ? animator->clip : std::string()};
+            }
+            ImGui::EndDisabled();
+        }
     }
     ImGui::PopID();
 }
@@ -382,6 +392,9 @@ void InspectorPanel::drawAsset(const std::string& ref, AssetCache& assets, Thumb
             drawPreview(thumbnails, ref, kind, previewSize);
         if (kind == AssetKind::Prefab && ImGui::Button("Open Prefab", ImVec2(-1.0f, 0.0f)))
             m_requests.openPrefab = ref;
+        if (kind == AssetKind::Model && assets.skeleton(ref) &&
+            ImGui::Button("Open in Animation Viewer", ImVec2(-1.0f, 0.0f)))
+            m_requests.openAnimationViewer = Requests::Viewer{ref, {}, {}};
         if (ImGui::Button("Add to Scene", ImVec2(-1.0f, 0.0f)))
             m_requests.instantiate = ref;
         ImGui::TextDisabled("Or drag it into the Scene view or the Hierarchy");

@@ -100,6 +100,8 @@ void Editor::shutdown()
 {
     if (!m_initialized)
         return;
+    m_viewer.close();
+    m_viewer.release();
     m_sceneView.release();
     m_gameView.release();
     m_thumbnails.release();
@@ -120,12 +122,12 @@ void Editor::processEvent(const SDL_Event& event)
 
 bool Editor::editorCameraInput() const
 {
-    return m_visible && m_sceneView.hovered() && !ImGui::GetIO().WantTextInput;
+    return m_visible && !m_viewer.isOpen() && m_sceneView.hovered() && !ImGui::GetIO().WantTextInput;
 }
 
 bool Editor::gameInput() const
 {
-    return !m_visible || (m_gameView.focused() && !ImGui::GetIO().WantTextInput);
+    return !m_visible || (!m_viewer.isOpen() && m_gameView.focused() && !ImGui::GetIO().WantTextInput);
 }
 
 bool Editor::confirmQuit()
@@ -147,6 +149,12 @@ void Editor::update(const OverlayContext& context)
     if (!m_visible)
         return;
 
+    if (m_quitAsked && m_viewer.isOpen())
+        m_viewer.close();  // the unsaved changes prompt belongs to the scene UI
+    if (m_viewer.isOpen()) {
+        updateViewer(context);
+        return;
+    }
     if (m_quitAsked) {
         m_quitAsked = false;
         if (context.playMode != PlayMode::Edit)
@@ -248,6 +256,11 @@ void Editor::syncSelectedTag(entt::registry& registry)
 
 void Editor::renderViews(const OverlayContext& context)
 {
+    if (m_viewer.isOpen()) {
+        m_viewer.render(context);
+        m_thumbnails.process(context.renderer, context.assets, 4);
+        return;
+    }
     // A prefab without a sun of its own is lit by a default one, like a new scene's
     auto suns = context.scene.registry().view<DirectionalLight>();
     if (m_inPrefab && suns.begin() == suns.end()) {
@@ -309,7 +322,9 @@ void Editor::drawDockSpace()
 
 void Editor::drawMenuBar(const OverlayContext& context)
 {
-    const bool editing = context.playMode == PlayMode::Edit;
+    // The viewer leaves the scene alone: no scene commands, no scene undo
+    const bool viewer = m_viewer.isOpen();
+    const bool editing = context.playMode == PlayMode::Edit && !viewer;
     if (editing) {
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, ImGuiInputFlags_RouteGlobal))
             request(context, Pending::NewScene);
@@ -322,10 +337,10 @@ void Editor::drawMenuBar(const OverlayContext& context)
     }
 
     // Global route: a focused text field keeps its own Ctrl+Z
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
+    if (!viewer && ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
         undo(context);
-    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
-        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
+    if (!viewer && (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
+                    ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)))
         redo(context);
 
     if (!ImGui::BeginMainMenuBar())
@@ -343,15 +358,19 @@ void Editor::drawMenuBar(const OverlayContext& context)
         if (m_inPrefab && ImGui::MenuItem("Close Prefab"))
             request(context, Pending::ClosePrefab);
         ImGui::EndDisabled();
-        if (!editing)
+        if (viewer) {
+            if (ImGui::MenuItem("Close Animation Viewer", "Esc"))
+                m_viewer.close();
+        } else if (!editing) {
             ImGui::TextDisabled("Stop playing to save or load");
+        }
         ImGui::Separator();
         if (ImGui::MenuItem("Exit"))
             m_quitAsked = true;
         ImGui::EndMenu();
     }
 
-    if (ImGui::BeginMenu("Edit")) {
+    if (ImGui::BeginMenu("Edit", !viewer)) {
         const std::string undoLabel = m_history.canUndo() ? "Undo " + m_history.undoName() : "Undo";
         const std::string redoLabel = m_history.canRedo() ? "Redo " + m_history.redoName() : "Redo";
         if (ImGui::MenuItem(undoLabel.c_str(), "Ctrl+Z", false, m_history.canUndo()))
@@ -363,7 +382,7 @@ void Editor::drawMenuBar(const OverlayContext& context)
         ImGui::EndMenu();
     }
 
-    if (ImGui::BeginMenu("Assets")) {
+    if (ImGui::BeginMenu("Assets", !viewer)) {
         if (ImGui::BeginMenu("Create")) {
             if (ImGui::MenuItem("Folder"))
                 m_projectPanel.createFolder();
@@ -383,7 +402,7 @@ void Editor::drawMenuBar(const OverlayContext& context)
         ImGui::EndMenu();
     }
 
-    if (ImGui::BeginMenu("GameObject")) {
+    if (ImGui::BeginMenu("GameObject", !viewer)) {
         m_actions.drawCreateItems();
         ImGui::EndMenu();
     }
@@ -421,11 +440,13 @@ void Editor::drawPlayButtons(const OverlayContext& context)
 
     if (playing)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.8f, 1.0f));
-    ImGui::BeginDisabled(m_inPrefab);
+    ImGui::BeginDisabled(m_inPrefab || m_viewer.isOpen());
     const bool toggled = ImGui::Button(playing ? "Stop" : "Play");
     ImGui::EndDisabled();
     if (m_inPrefab)
         ImGui::SetItemTooltip("Close the prefab to play");
+    else if (m_viewer.isOpen())
+        ImGui::SetItemTooltip("Close the Animation Viewer to play");
     if (playing)
         ImGui::PopStyleColor();
     if (toggled)
@@ -819,6 +840,8 @@ void Editor::handleProjectEvents(const OverlayContext& context)
         request(context, Pending::OpenPrefab, *events.openPrefab);
     if (events.instantiate)
         m_actions.instantiate(*events.instantiate);
+    if (events.openAnimationViewer)
+        openAnimationViewer(context, *events.openAnimationViewer, {}, {});
     if (events.createScene)
         createSceneAsset(context, *events.createScene);
     if (events.createPrefab)
@@ -838,6 +861,35 @@ void Editor::handleInspectorRequests(const OverlayContext& context)
         request(context, Pending::OpenPrefab, requests.openPrefab);
     if (!requests.instantiate.empty())
         m_actions.instantiate(requests.instantiate);
+    if (requests.openAnimationViewer)
+        openAnimationViewer(context, requests.openAnimationViewer->model, requests.openAnimationViewer->material,
+                            requests.openAnimationViewer->clip);
+}
+
+void Editor::openAnimationViewer(const OverlayContext& context, const std::string& model, const std::string& material,
+                                 const std::string& clip)
+{
+    if (context.playMode != PlayMode::Edit) {
+        setStatus("Stop playing to open the Animation Viewer");
+        return;
+    }
+    std::string error;
+    if (!m_viewer.open(context.assets, context.renderer, model, material, clip, &error))
+        setStatus("Can't open the Animation Viewer: " + error);
+}
+
+// The viewer's frame: menu bar, its own dock space and panels; the scene's panels wait
+void Editor::updateViewer(const OverlayContext& context)
+{
+    updateTitle(context);
+    drawMenuBar(context);
+    m_profilerPanel.draw(context.renderer.profiler());
+    m_viewer.draw(context);
+    m_dialogs.draw();
+    if (m_viewer.takeCloseRequest())
+        m_viewer.close();
+    if (!m_viewer.isOpen())
+        m_sceneView.focus();
 }
 
 // OS file drops: copied into the open Project folder. A model dropped on the Scene view is
