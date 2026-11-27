@@ -1,14 +1,21 @@
 #include "Editor.h"
 
+#include "engine/core/Paths.h"
+#include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
+#include "engine/scene/SceneSerializer.h"
+#include "engine/scene/Transform.h"
 
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
+
+#include <cstdio>
+#include <filesystem>
 
 Editor::~Editor()
 {
@@ -28,6 +35,7 @@ bool Editor::init(SDL_Window* window, SDL_GLContext context)
         return false;
     }
     m_initialized = true;
+    m_window = window;
     m_debugPanel.init();
     return true;
 }
@@ -70,7 +78,9 @@ void Editor::update(const OverlayContext& context)
     if (!m_visible)
         return;
 
-    drawToolbar(context.playMode);
+    applyDialogResult(context);
+    updateTitle(context.scene.path());
+    drawMenuBar(context);
     drawDockSpace();
     m_debugPanel.draw(context);
     m_hierarchyPanel.draw(context.scene, m_selected);
@@ -137,12 +147,59 @@ void Editor::drawDockSpace()
     ImGui::DockSpaceOverViewport(dockId, viewport);
 }
 
-// Stop keeps the scene as it is; restoring the pre-Play state needs serialization
-void Editor::drawToolbar(PlayMode& mode)
+static constexpr SDL_DialogFileFilter SceneFilter{"Scene", "scene"};
+
+void Editor::drawMenuBar(const OverlayContext& context)
 {
+    const bool editing = context.playMode == PlayMode::Edit;
+    if (editing) {
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_N, ImGuiInputFlags_RouteGlobal))
+            newScene(context);
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_O, ImGuiInputFlags_RouteGlobal))
+            showOpenDialog();
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal))
+            saveScene(context, context.scene.path());
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, ImGuiInputFlags_RouteGlobal))
+            showSaveDialog();
+    }
+
     if (!ImGui::BeginMainMenuBar())
         return;
+    if (ImGui::BeginMenu("File")) {
+        ImGui::BeginDisabled(!editing);
+        if (ImGui::MenuItem("New Scene", "Ctrl+N"))
+            newScene(context);
+        if (ImGui::MenuItem("Open...", "Ctrl+O"))
+            showOpenDialog();
+        if (ImGui::MenuItem("Save", "Ctrl+S"))
+            saveScene(context, context.scene.path());
+        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
+            showSaveDialog();
+        ImGui::EndDisabled();
+        if (!editing)
+            ImGui::TextDisabled("Stop playing to save or load");
+        ImGui::EndMenu();
+    }
 
+    drawPlayButtons(context);
+
+    const char* modeText = context.playMode == PlayMode::Edit   ? "Edit"
+                           : context.playMode == PlayMode::Play ? "Playing"
+                                                                : "Paused";
+    const std::string& path = context.scene.path();
+    const std::string sceneName = path.empty() ? "Untitled" : std::filesystem::path(path).filename().string();
+    std::string text = sceneName + "  |  " + modeText;
+    if (!m_status.empty() && ImGui::GetTime() - m_statusTime < 5.0)
+        text = m_status + "  |  " + text;
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::CalcTextSize(text.c_str()).x -
+                         ImGui::GetStyle().ItemSpacing.x * 2.0f);
+    ImGui::TextUnformatted(text.c_str());
+    ImGui::EndMainMenuBar();
+}
+
+void Editor::drawPlayButtons(const OverlayContext& context)
+{
+    PlayMode& mode = context.playMode;
     const bool playing = mode != PlayMode::Edit;
     const ImGuiStyle& style = ImGui::GetStyle();
     const float width = ImGui::CalcTextSize("Stop").x + ImGui::CalcTextSize("Resume").x +
@@ -151,22 +208,140 @@ void Editor::drawToolbar(PlayMode& mode)
 
     if (playing)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.8f, 1.0f));
-    if (ImGui::Button(playing ? "Stop" : "Play")) {
-        mode = playing ? PlayMode::Edit : PlayMode::Play;
-        if (playing)
-            m_sceneView.focus();
-        else
-            m_gameView.focus();
-    }
+    const bool toggled = ImGui::Button(playing ? "Stop" : "Play");
     if (playing)
         ImGui::PopStyleColor();
+    if (toggled)
+        setPlaying(context, !playing);
 
     ImGui::BeginDisabled(!playing);
     if (ImGui::Button(mode == PlayMode::Paused ? "Resume" : "Pause"))
         mode = mode == PlayMode::Paused ? PlayMode::Play : PlayMode::Paused;
     ImGui::EndDisabled();
+}
 
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::CalcTextSize("Playing").x - style.ItemSpacing.x * 2.0f);
-    ImGui::TextDisabled("%s", mode == PlayMode::Edit ? "Edit" : mode == PlayMode::Play ? "Playing" : "Paused");
-    ImGui::EndMainMenuBar();
+// Play snapshots the scene; Stop restores it, so nothing done while playing sticks.
+// The selection survives by its position in the file order.
+void Editor::setPlaying(const OverlayContext& context, bool playing)
+{
+    if (playing) {
+        std::vector<entt::entity> order;
+        m_playSnapshot = ::saveScene(context.scene, context.components, &order);
+        m_playSelection = SIZE_MAX;
+        for (std::size_t i = 0; i < order.size(); ++i) {
+            if (order[i] == m_selected)
+                m_playSelection = i;
+        }
+        context.playMode = PlayMode::Play;
+        m_gameView.focus();
+        return;
+    }
+
+    context.playMode = PlayMode::Edit;
+    std::vector<entt::entity> order;
+    std::string error;
+    if (loadScene(context.scene, context.components, m_playSnapshot, &error, &order))
+        m_selected = m_playSelection < order.size() ? order[m_playSelection] : entt::null;
+    else
+        setStatus("Restore failed: " + error);
+    m_playSnapshot.clear();
+    m_sceneView.focus();
+}
+
+void Editor::newScene(const OverlayContext& context)
+{
+    Scene& scene = context.scene;
+    scene.clear();
+    scene.setPath("");
+    m_selected = entt::null;
+
+    const entt::entity camera = scene.createGameObject("Main Camera");
+    Transform& transform = scene.registry().get<Transform>(camera);
+    transform.setPos({0.0f, 2.0f, 10.0f});
+    transform.lookAt({0.0f, 0.0f, 0.0f});
+    scene.registry().emplace<CameraComponent>(camera);
+}
+
+void Editor::openScene(const OverlayContext& context, const std::string& path)
+{
+    std::string error;
+    if (loadSceneFile(context.scene, context.components, path, &error)) {
+        m_selected = entt::null;
+        setStatus("Opened " + std::filesystem::path(path).filename().string());
+    } else {
+        setStatus("Open failed: " + error);
+    }
+}
+
+void Editor::saveScene(const OverlayContext& context, const std::string& path)
+{
+    if (path.empty()) {
+        showSaveDialog();
+        return;
+    }
+    std::string error;
+    if (saveSceneFile(context.scene, context.components, path, &error))
+        setStatus("Saved " + std::filesystem::path(path).filename().string());
+    else
+        setStatus("Save failed: " + error);
+}
+
+void Editor::onDialog(void* userdata, const char* const* files, bool save)
+{
+    if (!files) {
+        std::fprintf(stderr, "File dialog failed: %s\n", SDL_GetError());
+        return;
+    }
+    if (!files[0])
+        return;  // cancelled
+    auto* editor = static_cast<Editor*>(userdata);
+    const std::lock_guard lock(editor->m_dialogMutex);
+    editor->m_dialogResult = DialogResult{save, files[0]};
+}
+
+void Editor::showOpenDialog()
+{
+    SDL_ShowOpenFileDialog([](void* editor, const char* const* files, int) { onDialog(editor, files, false); }, this,
+                           m_window, &SceneFilter, 1, resourcePath("assets/scenes").c_str(), false);
+}
+
+void Editor::showSaveDialog()
+{
+    SDL_ShowSaveFileDialog([](void* editor, const char* const* files, int) { onDialog(editor, files, true); }, this,
+                           m_window, &SceneFilter, 1, resourcePath("assets/scenes").c_str());
+}
+
+void Editor::applyDialogResult(const OverlayContext& context)
+{
+    std::optional<DialogResult> result;
+    {
+        const std::lock_guard lock(m_dialogMutex);
+        result.swap(m_dialogResult);
+    }
+    if (!result || context.playMode != PlayMode::Edit)
+        return;
+    if (result->save) {
+        std::filesystem::path path = result->path;
+        if (path.extension() != ".scene")
+            path += ".scene";
+        saveScene(context, path.string());
+    } else {
+        openScene(context, result->path);
+    }
+}
+
+void Editor::setStatus(std::string message)
+{
+    std::fprintf(stderr, "%s\n", message.c_str());
+    m_status = std::move(message);
+    m_statusTime = ImGui::GetTime();
+}
+
+void Editor::updateTitle(const std::string& path)
+{
+    if (path == m_titlePath || !m_window)
+        return;
+    m_titlePath = path;
+    const std::string name = path.empty() ? "Untitled" : std::filesystem::path(path).filename().string();
+    SDL_SetWindowTitle(m_window, (name + " - Renderer").c_str());
 }

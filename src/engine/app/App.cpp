@@ -7,6 +7,7 @@
 
 #include <cstdio>
 #include <optional>
+#include <utility>
 
 #ifndef NDEBUG
 static void GLAD_API_PTR glDebugCallback(GLenum, GLenum type, GLuint, GLenum severity,
@@ -79,6 +80,7 @@ bool App::init(const char* title, int width, int height)
     m_renderer = Renderer::create();
     if (!m_renderer)
         return false;
+    m_assets.setRenderer(m_renderer.get());
     if (m_overlay && !m_overlay->init(m_window, m_context)) {
         std::fprintf(stderr, "Failed to init overlay\n");
         return false;
@@ -102,12 +104,19 @@ bool App::init(const char* title, int width, int height)
 // Rebuilds every instance each frame until the Renderer gets handle-based instances
 void App::syncRenderInstances()
 {
-    const entt::registry& registry = m_scene.registry();
-    const auto* selected = registry.storage<Selected>();
+    entt::registry& registry = m_scene.registry();
+    const auto* selected = std::as_const(registry).storage<Selected>();
     const bool anySelected = selected && !selected->empty();
 
     m_renderer->clearInstances();
     for (auto [entity, world, mesh] : registry.view<WorldTransform, MeshRenderer>().each()) {
+        if (mesh.model == InvalidModel) {
+            if (mesh.mesh.empty())
+                continue;
+            mesh.model = m_assets.model(mesh.mesh);
+            if (mesh.model == InvalidModel)
+                continue;
+        }
         bool highlight = false;
         if (anySelected) {
             for (entt::entity e = entity; e != entt::null && !highlight; e = registry.get<Relationship>(e).parent)

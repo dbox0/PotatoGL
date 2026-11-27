@@ -7,6 +7,11 @@
 #include "editor/SceneViewPanel.h"
 #include "editor/ViewportPanel.h"
 
+#include <mutex>
+#include <optional>
+#include <string>
+#include <vector>
+
 // Dear ImGui docking editor; F1 hides it and shows the game camera fullscreen.
 // The only place that touches ImGui.
 class Editor final : public Overlay
@@ -26,8 +31,36 @@ private:
 
     void syncSelectedTag(entt::registry& registry);
 
+    // File dialogs answer on another thread; the result is applied in update()
+    struct DialogResult
+    {
+        bool save;
+        std::string path;
+    };
+    SDL_Window* m_window = nullptr;
+    std::mutex m_dialogMutex;
+    std::optional<DialogResult> m_dialogResult;
+
+    std::string m_playSnapshot;         // scene as it was when Play was pressed
+    std::size_t m_playSelection = SIZE_MAX;  // index of the selection in the snapshot
+    std::string m_status;               // last file error, shown in the menu bar
+    double m_statusTime = 0.0;
+    std::string m_titlePath = "\x01";  // path the window title was last set for
+
     void drawDockSpace();
-    void drawToolbar(PlayMode& mode);
+    void drawMenuBar(const OverlayContext& context);
+    void drawPlayButtons(const OverlayContext& context);
+    void setPlaying(const OverlayContext& context, bool playing);
+
+    void newScene(const OverlayContext& context);
+    void openScene(const OverlayContext& context, const std::string& path);
+    void saveScene(const OverlayContext& context, const std::string& path);
+    void showOpenDialog();
+    void showSaveDialog();
+    void applyDialogResult(const OverlayContext& context);
+    void setStatus(std::string message);
+    void updateTitle(const std::string& path);
+    static void onDialog(void* editor, const char* const* files, bool save);
 
 public:
     Editor() = default;

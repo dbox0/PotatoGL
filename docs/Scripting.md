@@ -50,7 +50,7 @@ REGISTER_SCRIPT(Bobber);
 
 void Bobber::fields(ComponentInfo& info)
 {
-    info.field<&Bobber::height>("Height", 0.01f).field<&Bobber::speed>("Speed", 0.05f);
+    info.field<&Bobber::height>("height", 0.01f).field<&Bobber::speed>("speed", 0.05f);
 }
 
 void Bobber::onStart(ScriptContext& ctx)
@@ -72,8 +72,12 @@ name, and the `game` library globs `src/game/`, so new files are picked up on th
 build without editing `CMakeLists.txt`. `game` is an `OBJECT` library on purpose: in a
 static library the linker would drop the registrar, since nothing references it.
 
-Fields listed in `fields()` show up in the inspector; the second argument is the drag
-speed. Unlisted members (`time`, `baseY` above) are internal state. `fields()` is
+Fields listed in `fields()` show up in the inspector and are saved with the scene. The
+first argument is the key, written as the member's name: scene files store it, so
+renaming it breaks saved scenes. The inspector label is the nicified key (`height` ->
+*Height*); pass a label second to override it (`("degreesPerSec", "Degrees/sec", 1.0f)`).
+The last argument is the drag speed. Unlisted members (`time`, `baseY` above) are
+internal state: not shown, not saved, reset to their defaults on load. `fields()` is
 optional.
 
 ## Hooks
@@ -142,8 +146,13 @@ with the × on its header.
   destroyed while a loop runs and the hierarchy stays linked.
 - **Every script needs at least one data member.** Empty structs are tags in EnTT and
   have no instance to call hooks on; this is a compile error with a clear message.
-- **Inspector field types** are `float`, `int`, `bool`, `glm::vec3`, `std::string` and
-  `entt::entity`. Anything else fails to compile at `.field<>()`.
+- **Field types** are `float`, `int`, `bool`, `glm::vec3`, `glm::quat`, `std::string`
+  and `entt::entity`. Anything else fails to compile at `.field<>()`. Entity fields are
+  remapped on load, so references between objects survive saving.
+- **The script's type name is its id in scene files.** Renaming the struct breaks
+  scenes that use it.
+- **`onCreate` sees the saved values.** On load the component is filled in before it's
+  added.
 - **Components must stay movable** (EnTT packs them tightly and moves them on removal),
   so don't keep pointers to `this` or to other components.
 
@@ -168,7 +177,7 @@ Call it from `Gameplay::fixedUpdate` in the order you want, and register the com
 in `registerGameComponents` (`src/game/Components.cpp`) to edit it in the inspector:
 
 ```cpp
-components.add<Bob>("Bob").field<&Bob::height>("Height", 0.01f);
+components.add<Bob>("Bob").field<&Bob::height>("height", 0.01f);
 ```
 
 Tips for hot loops:
@@ -180,16 +189,26 @@ Tips for hot loops:
 
 ## Reflection for your own components
 
-`ComponentRegistry` (`src/engine/reflect/ComponentRegistry.h`) describes types for tools.
-Plain members use `.field<&T::member>(label, speed)`. Members behind getters/setters, or
-values that need converting, use `.property()`:
+`ComponentRegistry` (`src/engine/reflect/ComponentRegistry.h`) describes types for the
+inspector and the scene serializer. `components.add<T>("Id")` takes the id scene files
+use; the display name is the nicified id (`MeshRenderer` -> *Mesh Renderer*), or set it
+with `.label("...")`.
+
+Plain members use `.field<&T::member>(key, speed)` or `.field<&T::member>(key, label, speed)`.
+Members behind getters/setters, or values that need converting, use `.property()`:
 
 ```cpp
 components.add<Health>("Health")
-    .property("Percent", FieldType::Float,
+    .property("percent", "Percent", FieldType::Float,
               [](const void* c) -> FieldValue { return static_cast<const Health*>(c)->ratio() * 100.0f; },
-              nullptr);  // nullptr setter = read-only
+              nullptr);  // nullptr setter = read-only, never saved
 ```
 
+Modifiers apply to the field added last: `.notSaved()` keeps it out of scene files (like
+Transform's Euler angles, which only the inspector uses), `.hidden()` keeps it out of the
+inspector (like Transform's quaternion, which is what gets saved).
+
 `.locked()` hides a component from *Add Component* and its remove button. Set
-`.addable = false` alone for components that need constructor data, like `MeshRenderer`.
+`.addable = false` alone for components that need constructor data.
+
+Components that aren't registered (`WorldTransform`, `Selected`, `Dead`) are never saved.

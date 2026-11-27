@@ -8,17 +8,23 @@
 
 void registerSceneComponents(ComponentRegistry& components)
 {
-    components.add<Name>("Name").locked().field<&Name::value>("Name");
+    components.add<Name>("Name").locked().field<&Name::value>("value", "Name");
 
+    // The quaternion is what's saved; the inspector edits Euler angles, which round-trip
+    // through it and can flip near +-90 deg pitch
     components.add<Transform>("Transform")
         .locked()
         .property(
-            "Position", FieldType::Vec3,
+            "position", "Position", FieldType::Vec3,
             [](const void* c) -> FieldValue { return static_cast<const Transform*>(c)->getPos(); },
             [](void* c, const FieldValue& v) { static_cast<Transform*>(c)->setPos(std::get<glm::vec3>(v)); })
-        // Euler round-trips through the quaternion, so values can flip near +-90 deg pitch
         .property(
-            "Rotation", FieldType::Vec3,
+            "rotation", "Rotation", FieldType::Quat,
+            [](const void* c) -> FieldValue { return static_cast<const Transform*>(c)->getRot(); },
+            [](void* c, const FieldValue& v) { static_cast<Transform*>(c)->setRot(std::get<glm::quat>(v)); })
+        .hidden()
+        .property(
+            "euler", "Rotation", FieldType::Vec3,
             [](const void* c) -> FieldValue {
                 return glm::degrees(glm::eulerAngles(static_cast<const Transform*>(c)->getRot()));
             },
@@ -26,25 +32,33 @@ void registerSceneComponents(ComponentRegistry& components)
                 static_cast<Transform*>(c)->setEulerAngles(glm::radians(std::get<glm::vec3>(v)));
             },
             0.5f)
+        .notSaved()
         .property(
-            "Scale", FieldType::Vec3,
+            "scale", "Scale", FieldType::Vec3,
             [](const void* c) -> FieldValue { return static_cast<const Transform*>(c)->getScale(); },
             [](void* c, const FieldValue& v) { static_cast<Transform*>(c)->setScale(std::get<glm::vec3>(v)); },
             0.01f);
 
-    components.add<MeshRenderer>("Mesh Renderer")
+    components.add<MeshRenderer>("MeshRenderer")
         .property(
-            "Model", FieldType::Int,
+            "mesh", "Mesh", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const MeshRenderer*>(c)->mesh; },
+            [](void* c, const FieldValue& v) {
+                auto* renderer = static_cast<MeshRenderer*>(c);
+                renderer->mesh = std::get<std::string>(v);
+                renderer->model = InvalidModel;
+            })
+        .property(
+            "model", "Model", FieldType::Int,
             [](const void* c) -> FieldValue { return static_cast<int>(static_cast<const MeshRenderer*>(c)->model); },
-            nullptr)
-        .addable = false;  // needs a ModelId, so only code can add one
+            nullptr);
 
     components.add<CameraComponent>("Camera")
-        .field<&CameraComponent::fovDeg>("FOV", 0.5f)
-        .field<&CameraComponent::nearPlane>("Near", 0.01f)
-        .field<&CameraComponent::farPlane>("Far", 1.0f)
-        .field<&CameraComponent::orthographic>("Orthographic")
-        .field<&CameraComponent::orthoHeight>("Ortho height", 0.1f);
+        .field<&CameraComponent::fovDeg>("fovDeg", "FOV", 0.5f)
+        .field<&CameraComponent::nearPlane>("nearPlane", "Near", 0.01f)
+        .field<&CameraComponent::farPlane>("farPlane", "Far", 1.0f)
+        .field<&CameraComponent::orthographic>("orthographic")
+        .field<&CameraComponent::orthoHeight>("orthoHeight", 0.1f);
 
     components.add<Disabled>("Disabled");
 }

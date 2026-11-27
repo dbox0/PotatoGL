@@ -13,9 +13,11 @@ struct Name
     std::string value;
 };
 
+// mesh is what gets saved; App resolves it to model through the AssetCache
 struct MeshRenderer
 {
-    ModelId model = InvalidModel;
+    std::string mesh;              // model path relative to the resource dir, e.g. "assets/Duck.glb"
+    ModelId model = InvalidModel;  // runtime handle, reset whenever mesh changes
 };
 
 // Intrusive doubly linked child list; children are kept in insertion order

@@ -7,7 +7,7 @@ REGISTER_SCRIPT(Rotator);
 
 void Rotator::fields(ComponentInfo& info)
 {
-    info.field<&Rotator::axis>("Axis", 0.01f).field<&Rotator::degreesPerSec>("Degrees/sec", 1.0f);
+    info.field<&Rotator::axis>("axis", 0.01f).field<&Rotator::degreesPerSec>("degreesPerSec", "Degrees/sec", 1.0f);
 }
 
 void Rotator::onUpdate(ScriptContext& ctx, float dt)

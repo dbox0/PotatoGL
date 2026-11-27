@@ -16,41 +16,60 @@ static bool drawField(const FieldInfo& field, void* data)
     switch (field.type) {
     case FieldType::Float: {
         float v = std::get<float>(value);
-        changed = ImGui::DragFloat(field.name, &v, field.speed);
+        changed = ImGui::DragFloat(field.label.c_str(), &v, field.speed);
         value = v;
         break;
     }
     case FieldType::Int: {
         int v = std::get<int>(value);
-        changed = ImGui::DragInt(field.name, &v, field.speed);
+        changed = ImGui::DragInt(field.label.c_str(), &v, field.speed);
         value = v;
         break;
     }
     case FieldType::Bool: {
         bool v = std::get<bool>(value);
-        changed = ImGui::Checkbox(field.name, &v);
+        changed = ImGui::Checkbox(field.label.c_str(), &v);
         value = v;
         break;
     }
     case FieldType::Vec3: {
         glm::vec3 v = std::get<glm::vec3>(value);
-        changed = ImGui::DragFloat3(field.name, &v.x, field.speed);
+        changed = ImGui::DragFloat3(field.label.c_str(), &v.x, field.speed);
         value = v;
         break;
     }
     case FieldType::String: {
-        char buffer[256];
-        std::snprintf(buffer, sizeof(buffer), "%s", std::get<std::string>(value).c_str());
-        changed = ImGui::InputText(field.name, buffer, sizeof(buffer));
-        value = std::string(buffer);
+        // Committed on Enter or focus loss, so e.g. a mesh path isn't loaded per keystroke.
+        // Only one text field is active at a time; it edits s_editBuffer.
+        static char s_editBuffer[256];
+        static ImGuiID s_editId = 0;
+        const ImGuiID id = ImGui::GetID(field.label.c_str());
+        char local[256];
+        std::snprintf(local, sizeof(local), "%s", std::get<std::string>(value).c_str());
+        char* buffer = id == s_editId ? s_editBuffer : local;
+        ImGui::InputText(field.label.c_str(), buffer, sizeof(local));
+        if (ImGui::IsItemActivated()) {
+            std::snprintf(s_editBuffer, sizeof(s_editBuffer), "%s", local);
+            s_editId = id;
+        }
+        if (ImGui::IsItemDeactivated()) {
+            changed = ImGui::IsItemDeactivatedAfterEdit();
+            value = std::string(s_editBuffer);
+            s_editId = 0;
+        }
+        break;
+    }
+    case FieldType::Quat: {
+        const glm::quat q = std::get<glm::quat>(value);
+        ImGui::LabelText(field.label.c_str(), "%.3f %.3f %.3f %.3f", q.x, q.y, q.z, q.w);
         break;
     }
     case FieldType::Entity: {
         const entt::entity v = std::get<entt::entity>(value);
         if (v == entt::null)
-            ImGui::LabelText(field.name, "None");
+            ImGui::LabelText(field.label.c_str(), "None");
         else
-            ImGui::LabelText(field.name, "Entity %u", static_cast<unsigned>(entt::to_integral(v)));
+            ImGui::LabelText(field.label.c_str(), "Entity %u", static_cast<unsigned>(entt::to_integral(v)));
         break;
     }
     }
@@ -115,8 +134,10 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
         else if (info.fields.empty())
             ImGui::TextDisabled("No editable fields");
         else
-            for (const FieldInfo& field : info.fields)
-                drawField(field, data);
+            for (const FieldInfo& field : info.fields) {
+                if (field.visible)
+                    drawField(field, data);
+            }
     }
     ImGui::PopID();
 }

@@ -7,7 +7,7 @@ REGISTER_SCRIPT(Movement);
 
 void Movement::fields(ComponentInfo& info)
 {
-    info.field<&Movement::speed>("Speed", 0.1f).field<&Movement::relativeToFacing>("Relative to facing");
+    info.field<&Movement::speed>("speed", 0.1f).field<&Movement::relativeToFacing>("relativeToFacing");
 }
 
 void Movement::onUpdate(ScriptContext& ctx, float dt)

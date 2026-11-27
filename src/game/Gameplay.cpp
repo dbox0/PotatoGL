@@ -4,31 +4,25 @@
 #include "game/Systems.h"
 #include "game/scripts/Rotator.h"
 
-#include "engine/assets/Model.h"
 #include "engine/core/Paths.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
+#include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <string>
 
-bool Gameplay::init(const GameContext& context)
+static constexpr const char* MainScene = "assets/scenes/Main.scene";
+
+// Used when there's no saved scene yet; save it from the editor to start editing it
+static void buildDefaultScene(Scene& scene)
 {
-    Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
-
-    registerGameComponents(context.components);
-    m_scripts = std::make_unique<ScriptRunner>(scene, context.components);
-    m_scripts->registerAll();
-
-    std::optional<ModelData> duck = loadModel(resourcePath("assets/Duck.glb"));
-    if (!duck)
-        return false;
-    const ModelId duckModel = context.renderer.addModel(*duck);
-
+    const std::string duckMesh = "assets/Duck.glb";
     const entt::entity ducks = scene.createGameObject("Ducks");
 
     constexpr int gridSize = 10;
@@ -41,14 +35,14 @@ bool Gameplay::init(const GameContext& context)
             Transform& transform = registry.get<Transform>(e);
             transform.setPos(pos);
             transform.rotate(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-            registry.emplace<MeshRenderer>(e, duckModel);
+            registry.emplace<MeshRenderer>(e, duckMesh);
             registry.emplace<Spin>(e, 0.5f + static_cast<float>((x * 13 + z * 7) % 16) * 0.1f);
 
             if (x == 0 && z == 0) {
                 const entt::entity duckling = scene.createGameObject("Duckling", e);
                 registry.get<Transform>(duckling).setPos({0.0f, 1.5f, 0.0f});
                 registry.get<Transform>(duckling).setScale(glm::vec3(0.5f));
-                registry.emplace<MeshRenderer>(duckling, duckModel);
+                registry.emplace<MeshRenderer>(duckling, duckMesh);
                 registry.emplace<Rotator>(duckling, glm::vec3(1.0f, 0.0f, 0.0f), 180.0f);
             }
         }
@@ -58,6 +52,23 @@ bool Gameplay::init(const GameContext& context)
     registry.get<Transform>(mainCamera).setPos({0.0f, 12.0f, 22.0f});
     registry.get<Transform>(mainCamera).lookAt({0.0f, 0.0f, 0.0f});
     registry.emplace<CameraComponent>(mainCamera);
+}
+
+bool Gameplay::init(const GameContext& context)
+{
+    Scene& scene = context.scene;
+
+    registerGameComponents(context.components);
+    m_scripts = std::make_unique<ScriptRunner>(scene, context.components);
+    m_scripts->registerAll();
+
+    const std::string path = resourcePath(MainScene);
+    std::string error;
+    if (!loadSceneFile(scene, context.components, path, &error)) {
+        std::printf("No scene loaded (%s), building the default one\n", error.c_str());
+        buildDefaultScene(scene);
+        scene.setPath(path);
+    }
 
     context.camera.getTransform().setPos({0.0f, 12.0f, 22.0f});
     context.camera.getTransform().lookAt({0.0f, 0.0f, 0.0f});

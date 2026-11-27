@@ -12,6 +12,7 @@ Minimum target is Intel HD Graphics 4600 (Haswell), which tops out at GL 4.3 on 
   (see [docs/Scripting.md](docs/Scripting.md))
 - Optional Dear ImGui docking editor: Scene and Game views, Play/Pause, hierarchy,
   inspector, debug stats
+- JSON scene files written through the component reflection; Play/Stop restores the scene
 - Shader hot reload in Debug builds; GPU buffers grow on demand
 
 ## Building
@@ -51,9 +52,11 @@ hot reloads it. A shader that fails to compile keeps the previous program runnin
 
 Editor (panels dock anywhere; the layout is saved to `imgui.ini`):
 
+- **File** menu: New Scene (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S), Save As
+  (Ctrl+Shift+S). Disabled while playing.
 - **Play / Pause** (top bar): the editor starts in Edit mode, where the game doesn't
-  update. Play runs it and focuses the Game view, which then gets keyboard input.
-  Stop returns to Edit mode but keeps the scene as it is for now.
+  update. Play snapshots the scene, runs it and focuses the Game view, which then gets
+  keyboard input. Stop restores the snapshot, like Unity.
 - **Scene** view: the free editor camera. The selection (and its children) gets an
   orange outline and a transform gizmo. **Game** view: the first entity with a
   `Camera` component (Gameplay creates *Main Camera*).
@@ -63,6 +66,35 @@ Editor (panels dock anywhere; the layout is saved to `imgui.ini`):
 - **Inspector** (bottom right): edit the selected object's components and scripts,
   remove them with the × on their header, add new ones with *Add Component* /
   *Add Script*.
+
+## Scenes
+
+Gameplay loads `assets/scenes/Main.scene` at startup; if it doesn't exist yet it builds
+the default duck scene in code, and Ctrl+S saves it there. Scene files are JSON:
+
+```json
+{
+  "version": 1,
+  "entities": [
+    {
+      "id": 2,
+      "parent": 1,
+      "components": {
+        "Name": { "value": "Duck 0" },
+        "Transform": { "position": [-11.25, 0.0, -11.25], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 1.0, 1.0] },
+        "MeshRenderer": { "mesh": "assets/Duck.glb" },
+        "Spin": { "radiansPerSec": 0.5 }
+      }
+    }
+  ]
+}
+```
+
+Every registered component is saved with its fields (see *Reflection* in
+[docs/Scripting.md](docs/Scripting.md)). Parents come before children, and siblings keep
+their order. Unknown components and fields are skipped with a warning, and missing fields
+keep their defaults. `MeshRenderer` stores a model path; the `AssetCache` loads each path
+once.
 
 ## Layout
 

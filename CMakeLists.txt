@@ -58,7 +58,10 @@ FetchContent_Declare(EnTT
     GIT_TAG v4.0.0
     GIT_SHALLOW TRUE)
 
-FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb EnTT)
+FetchContent_Declare(json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz)
+
+FetchContent_MakeAvailable(SDL3 glm cgltf ufbx stb EnTT json)
 
 # LTO for optimized builds, so script hooks inline into the runner's loops across files.
 # Set after the dependencies so only targets defined below get it.
@@ -95,6 +98,8 @@ add_library(engine STATIC
         src/engine/app/Game.h
         src/engine/app/Overlay.h
         src/engine/app/PlayMode.h
+        src/engine/assets/AssetCache.cpp
+        src/engine/assets/AssetCache.h
         src/engine/assets/FbxLoader.cpp
         src/engine/assets/FbxLoader.h
         src/engine/assets/GltfLoader.cpp
@@ -132,6 +137,8 @@ add_library(engine STATIC
         src/engine/scene/Components.h
         src/engine/scene/Scene.cpp
         src/engine/scene/Scene.h
+        src/engine/scene/SceneSerializer.cpp
+        src/engine/scene/SceneSerializer.h
         src/engine/scene/Transform.cpp
         src/engine/scene/Transform.h
         src/engine/script/ScriptContext.h
@@ -139,7 +146,7 @@ add_library(engine STATIC
         src/engine/script/ScriptRunner.cpp
         src/engine/script/ScriptRunner.h)
 target_include_directories(engine PUBLIC src)
-target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image)
+target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image nlohmann_json::nlohmann_json)
 target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
 target_compile_options(engine PRIVATE ${WARNING_FLAGS})
 

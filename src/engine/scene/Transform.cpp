@@ -5,9 +5,11 @@ void Transform::setPos(const glm::vec3& p)
     m_pos = p;
 }
 
+// Leaves unit quaternions bit-exact, so save/load round-trips don't drift
 void Transform::setRot(const glm::quat& r)
 {
-    m_rot = glm::normalize(r);
+    const float lengthSq = glm::dot(r, r);
+    m_rot = glm::abs(lengthSq - 1.0f) < 1e-6f ? r : glm::normalize(r);
 }
 
 void Transform::setScale(const glm::vec3& s)

@@ -88,6 +88,14 @@ void Scene::destroyRecursive(entt::entity e)
     m_registry.destroy(e);
 }
 
+void Scene::clear()
+{
+    m_deferred.clear();
+    entt::entity child;
+    while ((child = m_registry.get<Relationship>(m_root).firstChild) != entt::null)
+        destroyRecursive(child);
+}
+
 bool Scene::setParent(entt::entity e, entt::entity parent)
 {
     if (parent == entt::null)

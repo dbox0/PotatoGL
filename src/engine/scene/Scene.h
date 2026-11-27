@@ -21,6 +21,7 @@ private:
     entt::entity m_root = entt::null;
     std::vector<Deferred> m_deferred;
     std::vector<Deferred> m_flushing;  // kept around so neither vector reallocates every frame
+    std::string m_path;                // file it was loaded from / saved to; empty if never
 
     void link(entt::entity e, entt::entity parent);
     void unlink(entt::entity e);
@@ -43,6 +44,11 @@ public:
 
     // A plain registry().destroy() moves the children up to the top level instead
     void destroyRecursive(entt::entity e);
+    // Destroys every game object and drops deferred work; the root stays
+    void clear();
+
+    const std::string& path() const     { return m_path; }
+    void setPath(std::string path)      { m_path = std::move(path); }
 
     // Keeps the local transform. Fails if parent is e or one of its descendants.
     bool setParent(entt::entity e, entt::entity parent);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/app/CameraController.h"
+#include "engine/assets/AssetCache.h"
 #include "engine/app/Game.h"
 #include "engine/app/Overlay.h"
 #include "engine/app/PlayMode.h"
@@ -19,6 +20,7 @@ private:
     SDL_Window* m_window = nullptr;
     SDL_GLContext m_context = nullptr;
     std::unique_ptr<Renderer> m_renderer;
+    AssetCache m_assets;
     Camera m_camera;
     CameraController m_controller;
     ComponentRegistry m_components;
