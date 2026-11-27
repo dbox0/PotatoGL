@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/core/InplaceFunction.h"
+#include "engine/scene/Camera.h"
 #include "engine/scene/Components.h"
 
 #include <entt/entt.hpp>
@@ -73,7 +74,7 @@ public:
 
     // First CameraComponent not tagged Disabled; uses WorldTransform, so update those first
     entt::entity gameCamera() const;
-    std::optional<glm::mat4> gameCameraViewProj(float aspect) const;
+    std::optional<ViewMatrices> gameCameraView(float aspect) const;
 
     // For structural changes that aren't safe mid-iteration (spawning, reparenting)
     template<typename F>

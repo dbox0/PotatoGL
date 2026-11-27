@@ -108,6 +108,8 @@ add_library(engine STATIC
         src/engine/assets/Image.h
         src/engine/assets/Model.cpp
         src/engine/assets/Model.h
+        src/engine/assets/Primitives.cpp
+        src/engine/assets/Primitives.h
         src/engine/core/InplaceFunction.h
         src/engine/core/Input.h
         src/engine/core/Paths.cpp
@@ -121,6 +123,7 @@ add_library(engine STATIC
         src/engine/gfx/GpuProfiler.h
         src/engine/gfx/IndirectBuffer.cpp
         src/engine/gfx/IndirectBuffer.h
+        src/engine/gfx/LightData.h
         src/engine/gfx/OutlineMask.cpp
         src/engine/gfx/OutlineMask.h
         src/engine/gfx/PickBuffer.cpp
@@ -129,9 +132,13 @@ add_library(engine STATIC
         src/engine/gfx/RenderTarget.h
         src/engine/gfx/Shader.cpp
         src/engine/gfx/Shader.h
+        src/engine/gfx/ShadowMap.cpp
+        src/engine/gfx/ShadowMap.h
         src/engine/gfx/TextureArray.cpp
         src/engine/gfx/TextureArray.h
         src/engine/gfx/Vertex.h
+        src/engine/render/LightClusters.cpp
+        src/engine/render/LightClusters.h
         src/engine/render/Renderer.cpp
         src/engine/render/Renderer.h
         src/engine/scene/Camera.cpp
@@ -181,10 +188,15 @@ if(BUILD_EDITOR)
             src/editor/InspectorPanel.h
             src/editor/ProfilerPanel.cpp
             src/editor/ProfilerPanel.h
+            src/editor/SceneActions.cpp
+            src/editor/SceneActions.h
+            src/editor/SceneGizmos.cpp
+            src/editor/SceneGizmos.h
             src/editor/SceneHierarchyPanel.cpp
             src/editor/SceneHierarchyPanel.h
             src/editor/SceneViewPanel.cpp
             src/editor/SceneViewPanel.h
+            src/editor/Selection.h
             src/editor/ViewportPanel.cpp
             src/editor/ViewportPanel.h)
     target_link_libraries(editor PUBLIC engine PRIVATE imgui)

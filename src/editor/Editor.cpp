@@ -1,5 +1,6 @@
 #include "Editor.h"
 
+#include "engine/app/CameraController.h"
 #include "engine/core/Paths.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
@@ -85,39 +86,67 @@ void Editor::update(const OverlayContext& context)
     drawDockSpace();
     m_debugPanel.draw(context);
     m_profilerPanel.draw(context.renderer.profiler());
-    m_hierarchyPanel.draw(context.scene, context.components, m_history, m_selected);
-    m_inspectorPanel.draw(context.scene, context.components, m_selected, m_history);
+    m_hierarchyPanel.draw(context.scene, context.components, m_history, m_selection, m_actions);
+    m_inspectorPanel.draw(context.scene, context.components, m_selection.active(), m_history, m_selection.size());
     // The tab bar only exists after the first frame, and it selects its last tab
     if (m_selectSceneTab && ImGui::GetFrameCount() > 1) {
         m_sceneView.focus();
         m_selectSceneTab = false;
     }
-    m_sceneView.draw(context, m_history, m_selected);
+    m_sceneView.draw(context, m_history, m_selection, m_gameView.aspect());
     m_gameView.draw(context.scene.gameCamera() == entt::null ? "No camera in the scene" : nullptr);
+    if (!context.controller.isLooking())
+        handleObjectShortcuts();
+    EditContext edit{context.scene, context.components};
+    m_actions.apply(edit, m_history, m_selection, spawnPoint(context));
     syncSelectedTag(context.scene.registry());
+}
+
+// Only while the hierarchy or the Scene view has the user's attention, and no text field does
+void Editor::handleObjectShortcuts()
+{
+    if (!(m_hierarchyPanel.focused() || m_sceneView.focused() || m_sceneView.hovered()) ||
+        ImGui::GetIO().WantTextInput)
+        return;
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_D, ImGuiInputFlags_RouteGlobal))
+        m_actions.duplicate();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_C, ImGuiInputFlags_RouteGlobal))
+        m_actions.copy();
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_V, ImGuiInputFlags_RouteGlobal))
+        m_actions.paste();
+    if (ImGui::Shortcut(ImGuiKey_Delete, ImGuiInputFlags_RouteGlobal))
+        m_actions.remove();
+}
+
+// New top-level objects go a little in front of the editor camera
+glm::vec3 Editor::spawnPoint(const OverlayContext& context) const
+{
+    const Transform& camera = context.camera.getTransform();
+    return camera.getPos() + camera.forward() * 8.0f;
 }
 
 void Editor::syncSelectedTag(entt::registry& registry)
 {
-    if (m_selected != entt::null && !registry.valid(m_selected))
-        m_selected = entt::null;
-    if (m_selected == m_tagged)
+    m_selection.prune(registry);
+    if (m_selection.items() == m_tagged)
         return;
-    if (m_tagged != entt::null && registry.valid(m_tagged))
-        registry.remove<Selected>(m_tagged);
-    if (m_selected != entt::null)
-        registry.emplace_or_replace<Selected>(m_selected);
-    m_tagged = m_selected;
+    for (const entt::entity e : m_tagged) {
+        if (registry.valid(e))
+            registry.remove<Selected>(e);
+    }
+    for (const entt::entity e : m_selection.items())
+        registry.emplace_or_replace<Selected>(e);
+    m_tagged = m_selection.items();
 }
 
 void Editor::renderViews(const OverlayContext& context)
 {
-    m_sceneView.render(context, m_selected);
+    m_sceneView.render(context, m_selection);
     syncSelectedTag(context.scene.registry());
     if (m_gameView.visible()) {
         GpuScope scope(context.renderer.profiler(), "Game View");
-        if (const auto viewProj = context.scene.gameCameraViewProj(m_gameView.aspect()))
-            context.renderer.render(*viewProj, m_gameView.target());
+        if (const auto view = context.scene.gameCameraView(m_gameView.aspect()))
+            context.renderer.render(*view, m_gameView.target());
     }
 }
 
@@ -198,6 +227,13 @@ void Editor::drawMenuBar(const OverlayContext& context)
             undo(context);
         if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, m_history.canRedo()))
             redo(context);
+        ImGui::Separator();
+        m_actions.drawEditItems(!m_selection.empty());
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("GameObject")) {
+        m_actions.drawCreateItems();
         ImGui::EndMenu();
     }
 
@@ -252,7 +288,7 @@ void Editor::setPlaying(const OverlayContext& context, bool playing)
 {
     if (playing) {
         m_playSnapshot = ::saveScene(context.scene, context.components);
-        m_playSelection = m_selected == entt::null ? 0 : context.scene.uuidOf(m_selected);
+        m_playSelection = selectionUuids(context.scene);
         m_editHistory = std::move(m_history);
         m_history.clear();
         context.playMode = PlayMode::Play;
@@ -266,7 +302,7 @@ void Editor::setPlaying(const OverlayContext& context, bool playing)
         setSelection(context.scene, m_playSelection);
     else
         setStatus("Restore failed: " + error);
-    m_lastSelection = selectionUuid(context.scene);
+    m_lastSelection = selectionUuids(context.scene);
     m_history = std::move(m_editHistory);
     m_editHistory.clear();
     m_playSnapshot.clear();
@@ -287,29 +323,43 @@ void Editor::redo(const OverlayContext& context)
         setSelection(context.scene, *selection);
 }
 
-std::uint64_t Editor::selectionUuid(const Scene& scene) const
+SelectionIds Editor::selectionUuids(const Scene& scene) const
 {
-    return m_selected != entt::null && scene.registry().valid(m_selected) ? scene.uuidOf(m_selected) : 0;
+    SelectionIds uuids;
+    for (const entt::entity e : m_selection.items()) {
+        if (scene.registry().valid(e))
+            uuids.push_back(scene.uuidOf(e));
+    }
+    return uuids;
 }
 
 // Restoring a selection is not a selection change of its own
-void Editor::setSelection(const Scene& scene, std::uint64_t uuid)
+void Editor::setSelection(const Scene& scene, const SelectionIds& uuids)
 {
-    m_selected = uuid == 0 ? entt::null : scene.findByUuid(uuid);
-    m_lastSelection = selectionUuid(scene);
+    std::vector<entt::entity> items;
+    for (const std::uint64_t uuid : uuids) {
+        const entt::entity e = uuid == 0 ? entt::null : scene.findByUuid(uuid);
+        if (e != entt::null && scene.registry().valid(e))
+            items.push_back(e);
+    }
+    m_selection.assign(std::move(items));
+    m_lastSelection = selectionUuids(scene);
 }
 
 // Runs at the start of a frame, so it also sees picks made while rendering the last one
 void Editor::recordSelection(const Scene& scene)
 {
-    const std::uint64_t now = selectionUuid(scene);
+    m_selection.prune(scene.registry());
+    SelectionIds now = selectionUuids(scene);
     std::string name = "Clear Selection";
-    if (now != 0) {
-        const Name* label = scene.registry().try_get<Name>(m_selected);
+    if (now.size() == 1) {
+        const Name* label = scene.registry().try_get<Name>(m_selection.active());
         name = "Select " + (label && !label->value.empty() ? label->value : std::string("Object"));
+    } else if (now.size() > 1) {
+        name = "Select " + std::to_string(now.size()) + " Objects";
     }
     m_history.endFrame(m_lastSelection, now, std::move(name));
-    m_lastSelection = now;
+    m_lastSelection = std::move(now);
 }
 
 void Editor::newScene(const OverlayContext& context)
@@ -317,8 +367,8 @@ void Editor::newScene(const OverlayContext& context)
     Scene& scene = context.scene;
     scene.clear();
     scene.setPath("");
-    m_selected = entt::null;
-    m_lastSelection = 0;
+    m_selection.clear();
+    m_lastSelection.clear();
     m_history.clear();
 
     const entt::entity camera = scene.createGameObject("Main Camera");
@@ -332,8 +382,8 @@ void Editor::openScene(const OverlayContext& context, const std::string& path)
 {
     std::string error;
     if (loadSceneFile(context.scene, context.components, path, &error)) {
-        m_selected = entt::null;
-        m_lastSelection = 0;
+        m_selection.clear();
+        m_lastSelection.clear();
         m_history.clear();
         setStatus("Opened " + std::filesystem::path(path).filename().string());
     } else {

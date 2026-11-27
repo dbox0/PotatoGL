@@ -35,12 +35,14 @@ bool saveSceneFile(Scene& scene, const ComponentRegistry& components, const std:
 bool loadSceneFile(Scene& scene, const ComponentRegistry& components, const std::string& path,
                    std::string* error = nullptr);
 
-// One object and its descendants, in the scene format (undo, later copy/paste and prefabs)
+// One object and its descendants, in the scene format (undo, copy/paste, later prefabs)
 std::string saveEntityTree(Scene& scene, const ComponentRegistry& components, entt::entity root);
 // Adds a saved tree under parent (entt::null = top level) at a sibling index (SIZE_MAX = last).
-// Saved uuids are kept unless already in use. Returns the tree's root, entt::null on failure.
+// Saved uuids are kept unless already in use, or freshUuids is set (copies). References
+// inside the tree follow it either way. Returns the tree's root, entt::null on failure.
 entt::entity loadEntityTree(Scene& scene, const ComponentRegistry& components, std::string_view text,
-                            entt::entity parent = entt::null, std::size_t index = SIZE_MAX);
+                            entt::entity parent = entt::null, std::size_t index = SIZE_MAX,
+                            bool freshUuids = false);
 
 // One component's saved fields as a JSON object
 std::string saveComponent(const ComponentInfo& info, Scene& scene, entt::entity e);

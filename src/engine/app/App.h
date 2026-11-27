@@ -40,6 +40,7 @@ private:
         return {*m_renderer, m_scene, m_camera, m_controller, m_components, m_playMode};
     }
     void syncRenderInstances();
+    void syncRenderLights();
     void renderToWindow();
 
 public:

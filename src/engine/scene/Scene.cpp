@@ -193,13 +193,13 @@ entt::entity Scene::gameCamera() const
     return cameras.begin() == cameras.end() ? entt::null : *cameras.begin();
 }
 
-std::optional<glm::mat4> Scene::gameCameraViewProj(float aspect) const
+std::optional<ViewMatrices> Scene::gameCameraView(float aspect) const
 {
     const entt::entity e = gameCamera();
     if (e == entt::null)
         return std::nullopt;
     const auto& camera = m_registry.get<CameraComponent>(e);
-    return camera.projection(aspect) * viewFromWorld(m_registry.get<WorldTransform>(e).matrix);
+    return ViewMatrices{viewFromWorld(m_registry.get<WorldTransform>(e).matrix), camera.projection(aspect)};
 }
 
 void Scene::updateWorld(entt::entity e, const glm::mat4& parentWorld)

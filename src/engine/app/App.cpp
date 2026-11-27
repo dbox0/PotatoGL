@@ -126,16 +126,36 @@ void App::syncRenderInstances()
     }
 }
 
+// Lights point down their local -Z, like cameras
+void App::syncRenderLights()
+{
+    const entt::registry& registry = m_scene.registry();
+    m_renderer->clearLights();
+
+    auto suns = registry.view<WorldTransform, DirectionalLight>();
+    if (const auto it = suns.begin(); it != suns.end()) {
+        const auto& [world, light] = suns.get<WorldTransform, DirectionalLight>(*it);
+        m_renderer->setDirectionalLight(glm::vec3(world.matrix[2]), light.color, light.intensity);
+    }
+    registry.view<WorldTransform, PointLight>().each([&](const WorldTransform& world, const PointLight& light) {
+        m_renderer->addPointLight(glm::vec3(world.matrix[3]), light.color, light.intensity, light.range);
+    });
+    registry.view<WorldTransform, SpotLight>().each([&](const WorldTransform& world, const SpotLight& light) {
+        m_renderer->addSpotLight(glm::vec3(world.matrix[3]), -glm::vec3(world.matrix[2]), light.color,
+                                 light.intensity, light.range, light.innerDeg, light.outerDeg);
+    });
+}
+
 // Without a game camera the editor camera stands in
 void App::renderToWindow()
 {
     const float aspect = static_cast<float>(m_fbWidth) / static_cast<float>(m_fbHeight);
-    std::optional<glm::mat4> viewProj = m_scene.gameCameraViewProj(aspect);
-    if (!viewProj) {
+    std::optional<ViewMatrices> view = m_scene.gameCameraView(aspect);
+    if (!view) {
         m_camera.setAspect(aspect);
-        viewProj = m_camera.getProjection() * m_camera.getView();
+        view = ViewMatrices{m_camera.getView(), m_camera.getProjection()};
     }
-    m_renderer->render(*viewProj, nullptr, m_fbWidth, m_fbHeight);
+    m_renderer->render(*view, nullptr, m_fbWidth, m_fbHeight);
 }
 
 void App::onResize(int width, int height)
@@ -194,6 +214,7 @@ void App::run()
         {
             GpuScope scope(profiler, "Sync instances");
             syncRenderInstances();
+            syncRenderLights();
         }
         if (m_overlay && m_overlay->visible()) {
             m_overlay->renderViews(overlayContext());

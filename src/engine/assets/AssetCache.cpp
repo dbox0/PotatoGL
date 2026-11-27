@@ -1,6 +1,7 @@
 #include "AssetCache.h"
 
 #include "engine/assets/Model.h"
+#include "engine/assets/Primitives.h"
 #include "engine/core/Paths.h"
 
 #include <cstdio>
@@ -12,7 +13,11 @@ ModelId AssetCache::model(const std::string& path)
 
     ModelId id = InvalidModel;
     if (m_renderer) {
-        if (const std::optional<ModelData> data = loadModel(resourcePath(path)))
+        const bool builtin = path.starts_with(BuiltinMeshPrefix);
+        const std::optional<ModelData> data =
+            builtin ? makePrimitive(std::string_view(path).substr(BuiltinMeshPrefix.size()))
+                    : loadModel(resourcePath(path));
+        if (data)
             id = m_renderer->addModel(*data);
     }
     if (id == InvalidModel)

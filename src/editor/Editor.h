@@ -5,8 +5,10 @@
 #include "editor/EditHistory.h"
 #include "editor/InspectorPanel.h"
 #include "editor/ProfilerPanel.h"
+#include "editor/SceneActions.h"
 #include "editor/SceneHierarchyPanel.h"
 #include "editor/SceneViewPanel.h"
+#include "editor/Selection.h"
 #include "editor/ViewportPanel.h"
 
 #include <cstdint>
@@ -30,10 +32,13 @@ private:
     ViewportPanel m_gameView{"Game"};
     bool m_selectSceneTab = false;
 
-    entt::entity m_selected = entt::null;
-    entt::entity m_tagged = entt::null;  // carries the Selected tag
+    Selection m_selection;
+    std::vector<entt::entity> m_tagged;  // carry the Selected tag
+    SceneActions m_actions;
 
     void syncSelectedTag(entt::registry& registry);
+    void handleObjectShortcuts();
+    glm::vec3 spawnPoint(const OverlayContext& context) const;
 
     // File dialogs answer on another thread; the result is applied in update()
     struct DialogResult
@@ -48,8 +53,8 @@ private:
     EditHistory m_history;
     EditHistory m_editHistory;          // the Edit-mode history, parked while playing
     std::string m_playSnapshot;         // scene as it was when Play was pressed
-    std::uint64_t m_playSelection = 0;  // uuid of the selection when Play was pressed
-    std::uint64_t m_lastSelection = 0;  // uuid of the selection at the last recordSelection()
+    SelectionIds m_playSelection;       // the selection when Play was pressed
+    SelectionIds m_lastSelection;       // the selection at the last recordSelection()
     std::string m_status;               // last file error, shown in the menu bar
     double m_statusTime = 0.0;
     std::string m_titlePath = "\x01";  // path the window title was last set for
@@ -60,8 +65,8 @@ private:
     void setPlaying(const OverlayContext& context, bool playing);
     void undo(const OverlayContext& context);
     void redo(const OverlayContext& context);
-    std::uint64_t selectionUuid(const Scene& scene) const;
-    void setSelection(const Scene& scene, std::uint64_t uuid);
+    SelectionIds selectionUuids(const Scene& scene) const;
+    void setSelection(const Scene& scene, const SelectionIds& uuids);
     void recordSelection(const Scene& scene);
 
     void newScene(const OverlayContext& context);

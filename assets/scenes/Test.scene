@@ -1,0 +1,91 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "uuid": "8264653b29bf6004",
+      "components": {
+        "Name": {
+          "value": "Main Camera"
+        },
+        "Transform": {
+          "position": [0.0, 0.0, 0.0],
+          "rotation": [-0.09853762, 0.0, 0.0, 0.99513334],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Camera": {
+          "fovDeg": 60.0,
+          "nearPlane": 0.1,
+          "farPlane": 100.0,
+          "orthographic": false,
+          "orthoHeight": 10.0
+        }
+      }
+    },
+    {
+      "uuid": "3e35035cf87dd540",
+      "components": {
+        "Name": {
+          "value": "Cube"
+        },
+        "Transform": {
+          "position": [1.2201967, -1.3820102, -6.7015624],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "MeshRenderer": {
+          "mesh": "builtin:cube"
+        }
+      }
+    },
+    {
+      "uuid": "2b40ccd125b02d91",
+      "components": {
+        "Name": {
+          "value": "Plane"
+        },
+        "Transform": {
+          "position": [0.63696885, -2.115287, -5.837383],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "MeshRenderer": {
+          "mesh": "builtin:plane"
+        }
+      }
+    },
+    {
+      "uuid": "4fc999c6341141db",
+      "components": {
+        "Name": {
+          "value": "Cube"
+        },
+        "Transform": {
+          "position": [-1.3193827, -1.5883317, -6.7015624],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "MeshRenderer": {
+          "mesh": "builtin:cube"
+        }
+      }
+    },
+    {
+      "uuid": "54c4a66b9f76ca31",
+      "components": {
+        "Name": {
+          "value": "Point Light"
+        },
+        "Transform": {
+          "position": [-0.20354104, -0.52323043, -7.25081],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "PointLight": {
+          "color": [1.0, 1.0, 1.0],
+          "intensity": 1.0,
+          "range": 10.0
+        }
+      }
+    }
+  ]
+}

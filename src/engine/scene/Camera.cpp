@@ -14,6 +14,19 @@ glm::mat4 makeProjection(bool orthographic, float fovRad, float orthoHeight, flo
                         : glm::perspective(fovRad, aspect, zNear, zFar);
 }
 
+void clipPlanes(const glm::mat4& proj, float& zNear, float& zFar)
+{
+    const float a = proj[2][2];
+    const float b = proj[3][2];
+    if (isOrthographic(proj)) {
+        zNear = (b + 1.0f) / a;
+        zFar = (b - 1.0f) / a;
+    } else {
+        zNear = b / (a - 1.0f);
+        zFar = b / (a + 1.0f);
+    }
+}
+
 glm::mat4 viewFromWorld(const glm::mat4& world)
 {
     const glm::mat3 rot(glm::normalize(glm::vec3(world[0])), glm::normalize(glm::vec3(world[1])),

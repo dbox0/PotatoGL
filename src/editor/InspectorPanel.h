@@ -4,6 +4,7 @@
 
 #include <entt/entity/entity.hpp>
 
+#include <cstddef>
 #include <optional>
 
 class EditHistory;
@@ -24,5 +25,7 @@ private:
                      entt::entity e);
 
 public:
-    void draw(Scene& scene, const ComponentRegistry& components, entt::entity selected, EditHistory& history);
+    // selected: the active object; selectionCount: how many are selected in all
+    void draw(Scene& scene, const ComponentRegistry& components, entt::entity selected, EditHistory& history,
+              std::size_t selectionCount = 1);
 };

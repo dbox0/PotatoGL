@@ -1,6 +1,8 @@
 #include "SceneViewPanel.h"
 
 #include "editor/EditCommands.h"
+#include "editor/SceneActions.h"
+#include "editor/Selection.h"
 
 #include "engine/app/CameraController.h"
 #include "engine/app/Overlay.h"
@@ -9,31 +11,63 @@
 #include "engine/scene/Scene.h"
 
 #define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
 #include <imgui.h>
 #include <ImGuizmo.h>
 
+#include <cmath>
+#include <memory>
+#include <string>
+
 static constexpr glm::vec4 OutlineColor(1.0f, 0.25f, 0.0f, 1.0f);  // linear
 
-void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, entt::entity& selected)
+static void applyPick(Selection& selection, entt::entity hit, bool additive)
+{
+    if (!additive)
+        selection.set(hit);
+    else if (hit != entt::null)
+        selection.toggle(hit);
+}
+
+void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, Selection& selection,
+                          float gameAspect)
 {
     m_view.draw(nullptr, [&] {
         // No widget over the image: ImGuizmo only grabs the mouse when no item is hovered
         const bool clicked = ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                              !ImGui::IsAnyItemHovered();
         const ImVec2 mouse = ImGui::GetMousePos();
+        const ImGuiIO& io = ImGui::GetIO();
+        const bool additive = io.KeyCtrl || io.KeyShift;
+
+        Camera& camera = context.camera;
+        camera.setAspect(m_view.aspect());
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        drawList->PushClipRect(ImVec2(m_view.imageX(), m_view.imageY()),
+                               ImVec2(m_view.imageX() + m_view.imageWidth(), m_view.imageY() + m_view.imageHeight()),
+                               true);
+        m_gizmos.draw(drawList, context.scene, selection,
+                      {camera.getProjection() * camera.getView(), {m_view.imageX(), m_view.imageY()},
+                       {m_view.imageWidth(), m_view.imageHeight()}, gameAspect});
+        drawList->PopClipRect();
 
         drawToolbar();
-        drawGizmo(context, history, selected);
-        handleHotkeys(context, history, selected);
+        drawGizmo(context, history, selection);
+        handleHotkeys(context);
 
         if (clicked && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
-            const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
-            m_pickX = static_cast<int>((mouse.x - m_view.imageX()) * scale.x);
-            m_pickY = m_view.target().height() - 1 - static_cast<int>((mouse.y - m_view.imageY()) * scale.y);
-            m_pickRequested = true;
+            if (const entt::entity icon = m_gizmos.pick({mouse.x, mouse.y}); icon != entt::null) {
+                applyPick(selection, icon, additive);
+            } else {
+                const ImVec2 scale = io.DisplayFramebufferScale;
+                m_pickX = static_cast<int>((mouse.x - m_view.imageX()) * scale.x);
+                m_pickY = m_view.target().height() - 1 - static_cast<int>((mouse.y - m_view.imageY()) * scale.y);
+                m_pickRequested = true;
+                m_pickAdditive = additive;
+            }
         }
     });
 }
@@ -63,7 +97,7 @@ void SceneViewPanel::drawToolbar()
         m_local = !m_local;
 }
 
-void SceneViewPanel::handleHotkeys(const OverlayContext& context, EditHistory& history, entt::entity& selected)
+void SceneViewPanel::handleHotkeys(const OverlayContext& context)
 {
     if (!(m_view.hovered() || m_view.focused()) || ImGui::GetIO().WantTextInput || context.controller.isLooking() ||
         ImGuizmo::IsUsing())
@@ -78,29 +112,81 @@ void SceneViewPanel::handleHotkeys(const OverlayContext& context, EditHistory& h
         m_tool = Tool::Scale;
     if (ImGui::IsKeyPressed(ImGuiKey_X, false))
         m_local = !m_local;
-    if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && selected != entt::null &&
-        context.scene.registry().valid(selected)) {
-        EditContext edit{context.scene, context.components};
-        history.execute(edit, destroyEntityCommand(context.scene, selected));
-        selected = entt::null;
-    }
 }
 
-void SceneViewPanel::drawGizmo(const OverlayContext& context, EditHistory& history, entt::entity selected)
+// The local position, rotation and scale that put e at world
+static bool localFromWorld(const entt::registry& registry, entt::entity e, const glm::mat4& world,
+                           glm::vec3& translation, glm::quat& rotation, glm::vec3& scale)
+{
+    glm::mat4 parentWorld(1.0f);
+    const entt::entity parent = registry.get<Relationship>(e).parent;
+    if (parent != entt::null) {
+        if (const WorldTransform* w = registry.try_get<WorldTransform>(parent))
+            parentWorld = w->matrix;
+    }
+    glm::vec3 skew;
+    glm::vec4 perspective;
+    return glm::decompose(glm::inverse(parentWorld) * world, scale, rotation, translation, skew, perspective);
+}
+
+static void setWorld(entt::registry& registry, entt::entity e, const glm::mat4& world)
+{
+    glm::vec3 translation, scale;
+    glm::quat rotation;
+    if (!localFromWorld(registry, e, world, translation, rotation, scale))
+        return;
+    Transform& transform = registry.get<Transform>(e);
+    transform.setPos(translation);
+    transform.setRot(rotation);
+    transform.setScale(scale);
+}
+
+void SceneViewPanel::beginDrag(const OverlayContext& context, const Selection& selection)
 {
     entt::registry& registry = context.scene.registry();
-    const bool editable = m_tool != Tool::None && selected != entt::null && registry.valid(selected) &&
-                          registry.all_of<Transform, WorldTransform>(selected);
+    const EditContext edit{context.scene, context.components};
+    m_drag.clear();
+    for (const entt::entity e : selectionRoots(edit, selection)) {
+        if (registry.all_of<Transform, WorldTransform>(e))
+            m_drag.push_back({e, registry.get<Transform>(e), registry.get<WorldTransform>(e).matrix});
+    }
+    m_dragActive = selection.active();
+    m_dragActiveStart = registry.get<WorldTransform>(m_dragActive).matrix;
+    m_dragActiveScale = registry.get<Transform>(m_dragActive).getScale();
+}
+
+void SceneViewPanel::endDrag(const OverlayContext& context, EditHistory& history)
+{
+    entt::registry& registry = context.scene.registry();
+    EditContext edit{context.scene, context.components};
+    std::vector<std::unique_ptr<EditCommand>> commands;
+    for (const DragItem& item : m_drag) {
+        if (!registry.valid(item.entity) || !registry.all_of<Transform>(item.entity))
+            continue;
+        if (auto command = transformCommand(edit, item.entity, item.start, registry.get<Transform>(item.entity)))
+            commands.push_back(std::move(command));
+    }
+    if (commands.size() == 1)
+        history.push(std::move(commands.front()));
+    else if (!commands.empty())
+        history.push(groupCommand("Transform " + std::to_string(commands.size()) + " Objects", std::move(commands)));
+    m_drag.clear();
+    m_dragActive = entt::null;
+}
+
+// ImGuizmo moves the active object's world matrix; the change is then applied to each
+// selection root like Unity's Pivot mode: moved by the same offset, rotated about its own
+// position, scaled by the same factor
+void SceneViewPanel::drawGizmo(const OverlayContext& context, EditHistory& history, const Selection& selection)
+{
+    entt::registry& registry = context.scene.registry();
+    const entt::entity active = selection.active();
+    const bool editable = m_tool != Tool::None && active != entt::null && registry.valid(active) &&
+                          registry.all_of<Transform, WorldTransform>(active);
 
     // Drag ended (or its object went away): one complete edit
-    if (m_dragStart && (!ImGuizmo::IsUsing() || !editable || selected != m_dragEntity)) {
-        if (registry.valid(m_dragEntity) && registry.all_of<Transform>(m_dragEntity)) {
-            EditContext edit{context.scene, context.components};
-            history.push(transformCommand(edit, m_dragEntity, *m_dragStart, registry.get<Transform>(m_dragEntity)));
-        }
-        m_dragStart.reset();
-        m_dragEntity = entt::null;
-    }
+    if (m_dragActive != entt::null && (!ImGuizmo::IsUsing() || !editable || active != m_dragActive))
+        endDrag(context, history);
     if (!editable)
         return;
 
@@ -125,37 +211,55 @@ void SceneViewPanel::drawGizmo(const OverlayContext& context, EditHistory& histo
     const float snap[3] = {snapValue, snapValue, snapValue};
     const bool snapping = ImGui::GetIO().KeyCtrl;
 
-    glm::mat4 world = registry.get<WorldTransform>(selected).matrix;
+    glm::mat4 world = registry.get<WorldTransform>(active).matrix;
     const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(projection), operation,
                                               m_local ? ImGuizmo::LOCAL : ImGuizmo::WORLD, glm::value_ptr(world),
                                               nullptr, snapping ? snap : nullptr);
 
-    Transform& transform = registry.get<Transform>(selected);
-    if (ImGuizmo::IsUsing() && !m_dragStart) {
-        m_dragStart = transform;
-        m_dragEntity = selected;
-    }
-    if (!changed)
+    if (ImGuizmo::IsUsing() && m_dragActive == entt::null)
+        beginDrag(context, selection);
+    if (!changed || m_dragActive == entt::null)
         return;
 
-    glm::mat4 parentWorld(1.0f);
-    const entt::entity parent = registry.get<Relationship>(selected).parent;
-    if (parent != entt::null) {
-        if (const WorldTransform* w = registry.try_get<WorldTransform>(parent))
-            parentWorld = w->matrix;
-    }
-    glm::vec3 scale, translation, skew;
-    glm::vec4 perspective;
-    glm::quat rotation;
-    if (!glm::decompose(glm::inverse(parentWorld) * world, scale, rotation, translation, skew, perspective))
+    if (m_tool == Tool::Scale) {
+        // The active object's new local scale, relative to where the drag started
+        glm::vec3 translation, now;
+        glm::quat rotation;
+        if (!localFromWorld(registry, active, world, translation, rotation, now))
+            return;
+        glm::vec3 ratio(1.0f);
+        for (int i = 0; i < 3; ++i) {
+            if (std::abs(m_dragActiveScale[i]) > 1e-6f)
+                ratio[i] = now[i] / m_dragActiveScale[i];
+        }
+        for (const DragItem& item : m_drag) {
+            if (!registry.valid(item.entity))
+                continue;
+            Transform& transform = registry.get<Transform>(item.entity);
+            transform = item.start;
+            transform.setScale(item.start.getScale() * ratio);
+        }
         return;
-    transform.setPos(translation);
-    transform.setRot(rotation);
-    transform.setScale(scale);
-    registry.get<WorldTransform>(selected).matrix = world;
+    }
+
+    const glm::mat4 delta = world * glm::inverse(m_dragActiveStart);
+    for (const DragItem& item : m_drag) {
+        if (!registry.valid(item.entity))
+            continue;
+        glm::mat4 moved;
+        if (m_tool == Tool::Rotate) {
+            const glm::vec3 pivot(item.startWorld[3]);
+            const glm::mat4 rotation = glm::mat4(glm::mat3(delta));
+            moved = glm::translate(glm::mat4(1.0f), pivot) * rotation * glm::translate(glm::mat4(1.0f), -pivot) *
+                    item.startWorld;
+        } else {
+            moved = delta * item.startWorld;
+        }
+        setWorld(registry, item.entity, moved);
+    }
 }
 
-void SceneViewPanel::render(const OverlayContext& context, entt::entity& selected)
+void SceneViewPanel::render(const OverlayContext& context, Selection& selection)
 {
     if (!m_view.visible()) {
         m_pickRequested = false;
@@ -166,14 +270,15 @@ void SceneViewPanel::render(const OverlayContext& context, entt::entity& selecte
     const RenderTarget& target = m_view.target();
     Camera& camera = context.camera;
     camera.setAspect(m_view.aspect());
-    const glm::mat4 viewProj = camera.getProjection() * camera.getView();
+    const ViewMatrices view{camera.getView(), camera.getProjection()};
+    const glm::mat4 viewProj = view.viewProj();
     {
         GpuScope scope(profiler, "Scene");
-        context.renderer.render(viewProj, target);
+        context.renderer.render(view, target);
     }
 
     const entt::registry& registry = context.scene.registry();
-    const bool hasSelection = selected != entt::null && registry.valid(selected);
+    const bool hasSelection = !selection.empty();
 
     if (m_pickRequested) {
         GpuScope scope(profiler, "Pick IDs");
@@ -182,7 +287,7 @@ void SceneViewPanel::render(const OverlayContext& context, entt::entity& selecte
         context.renderer.renderIds(viewProj, m_pick);
         const std::uint32_t id = m_pick.read(m_pickX, m_pickY);
         const auto e = static_cast<entt::entity>(id);
-        selected = id != PickBuffer::NoId && registry.valid(e) ? e : entt::null;
+        applyPick(selection, id != PickBuffer::NoId && registry.valid(e) ? e : entt::null, m_pickAdditive);
     }
     if (hasSelection && context.renderer.hasHighlight()) {
         {

@@ -83,7 +83,7 @@ static bool drawField(const FieldInfo& field, void* data)
 }
 
 void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, entt::entity selected,
-                          EditHistory& history)
+                          EditHistory& history, std::size_t selectionCount)
 {
     m_history = &history;
     entt::registry& registry = scene.registry();
@@ -92,6 +92,8 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
             ImGui::TextDisabled("Nothing selected");
         } else {
             ImGui::TextDisabled("Entity %u", static_cast<unsigned>(entt::to_integral(selected)));
+            if (selectionCount > 1)
+                ImGui::TextDisabled("%zu objects selected, showing the active one", selectionCount);
             ImGui::PushItemWidth(-90.0f);
 
             for (const auto& info : components.all()) {

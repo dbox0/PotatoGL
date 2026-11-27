@@ -1,5 +1,6 @@
 #pragma once
 
+#include "editor/SceneGizmos.h"
 #include "editor/ViewportPanel.h"
 
 #include "engine/gfx/OutlineMask.h"
@@ -8,13 +9,15 @@
 
 #include <entt/entity/entity.hpp>
 
-#include <optional>
+#include <vector>
 
 class EditHistory;
+class Selection;
 struct OverlayContext;
 
-// Scene view: editor camera, click to select, Unity-style transform gizmo, selection outline.
-// Q none, W move, E rotate, R scale, X local/global, hold Ctrl to snap, Delete removes.
+// Scene view: editor camera, click to select (Ctrl/Shift+click adds or removes), Unity-style
+// transform gizmo on the active object that moves the whole selection, selection outline,
+// light and camera gizmos. Q none, W move, E rotate, R scale, X local/global, hold Ctrl to snap.
 class SceneViewPanel
 {
 public:
@@ -33,24 +36,40 @@ private:
     Tool m_tool = Tool::Move;
     bool m_local = true;
 
+    SceneGizmos m_gizmos;
+
     bool m_pickRequested = false;
+    bool m_pickAdditive = false;   // Ctrl or Shift was held: toggle instead of replace
     int m_pickX = 0, m_pickY = 0;  // pick buffer pixel, bottom-left origin
 
-    // Transform at the start of the current gizmo drag; the end of a drag is one undo step
-    std::optional<Transform> m_dragStart;
-    entt::entity m_dragEntity = entt::null;
+    // The selection roots as they were when the current gizmo drag started; the end of a
+    // drag is one undo step
+    struct DragItem
+    {
+        entt::entity entity;
+        Transform start;
+        glm::mat4 startWorld;
+    };
+    std::vector<DragItem> m_drag;
+    entt::entity m_dragActive = entt::null;
+    glm::mat4 m_dragActiveStart{1.0f};
+    glm::vec3 m_dragActiveScale{1.0f};
 
     void drawToolbar();
-    void handleHotkeys(const OverlayContext& context, EditHistory& history, entt::entity& selected);
-    void drawGizmo(const OverlayContext& context, EditHistory& history, entt::entity selected);
+    void handleHotkeys(const OverlayContext& context);
+    void drawGizmo(const OverlayContext& context, EditHistory& history, const Selection& selection);
+    void beginDrag(const OverlayContext& context, const Selection& selection);
+    void endDrag(const OverlayContext& context, EditHistory& history);
 
 public:
-    void draw(const OverlayContext& context, EditHistory& history, entt::entity& selected);
+    // gameAspect: for the selected cameras' frustums
+    void draw(const OverlayContext& context, EditHistory& history, Selection& selection, float gameAspect);
     // After the scene is updated: color, ids on a click, then the selection outline
-    void render(const OverlayContext& context, entt::entity& selected);
+    void render(const OverlayContext& context, Selection& selection);
     void release();
 
     void focus()                        { m_view.focus(); }
     const char* name() const            { return m_view.name(); }
     bool hovered() const                { return m_view.hovered(); }
+    bool focused() const                { return m_view.focused(); }
 };

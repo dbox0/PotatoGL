@@ -16,6 +16,6 @@ private:
 public:
     void setRenderer(Renderer* renderer) { m_renderer = renderer; }
 
-    // path is relative to the resource dir; InvalidModel if it can't be loaded
+    // path is relative to the resource dir, or "builtin:<name>" (Primitives.h); InvalidModel if it can't be loaded
     ModelId model(const std::string& path);
 };

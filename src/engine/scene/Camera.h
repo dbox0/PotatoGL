@@ -4,6 +4,17 @@
 glm::mat4 makeProjection(bool orthographic, float fovRad, float orthoHeight, float aspect, float zNear, float zFar);
 // Inverse of a world matrix, ignoring its scale
 glm::mat4 viewFromWorld(const glm::mat4& world);
+// Near and far distances of a glm::perspective or glm::ortho matrix
+void clipPlanes(const glm::mat4& proj, float& zNear, float& zFar);
+inline bool isOrthographic(const glm::mat4& proj) { return proj[3][3] == 1.0f; }
+
+struct ViewMatrices
+{
+    glm::mat4 view;
+    glm::mat4 proj;
+
+    glm::mat4 viewProj() const { return proj * view; }
+};
 
 
 class Camera

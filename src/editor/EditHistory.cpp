@@ -13,7 +13,7 @@ bool EditHistory::execute(EditContext& context, std::unique_ptr<EditCommand> com
 void EditHistory::push(std::unique_ptr<EditCommand> command)
 {
     if (command)
-        pushStep({std::move(command), {}, 0, 0});
+        pushStep({std::move(command), {}, {}, {}});
 }
 
 void EditHistory::pushStep(Step step)
@@ -26,7 +26,8 @@ void EditHistory::pushStep(Step step)
     m_pendingSteps = std::min(m_pendingSteps, m_undo.size());
 }
 
-void EditHistory::endFrame(std::uint64_t selectionBefore, std::uint64_t selectionAfter, std::string selectName)
+void EditHistory::endFrame(const SelectionIds& selectionBefore, const SelectionIds& selectionAfter,
+                           std::string selectName)
 {
     if (m_pendingSteps > 0) {
         const std::size_t first = m_undo.size() - m_pendingSteps;
@@ -40,14 +41,14 @@ void EditHistory::endFrame(std::uint64_t selectionBefore, std::uint64_t selectio
     m_pendingSteps = 0;
 }
 
-std::optional<std::uint64_t> EditHistory::undo(EditContext& context)
+std::optional<SelectionIds> EditHistory::undo(EditContext& context)
 {
     while (!m_undo.empty()) {
         Step step = std::move(m_undo.back());
         m_undo.pop_back();
         m_pendingSteps = std::min(m_pendingSteps, m_undo.size());
         if (!step.command || step.command->undo(context)) {
-            const std::uint64_t selection = step.selectionBefore;
+            SelectionIds selection = step.selectionBefore;
             m_redo.push_back(std::move(step));
             return selection;
         }
@@ -55,13 +56,13 @@ std::optional<std::uint64_t> EditHistory::undo(EditContext& context)
     return std::nullopt;
 }
 
-std::optional<std::uint64_t> EditHistory::redo(EditContext& context)
+std::optional<SelectionIds> EditHistory::redo(EditContext& context)
 {
     while (!m_redo.empty()) {
         Step step = std::move(m_redo.back());
         m_redo.pop_back();
         if (!step.command || step.command->redo(context)) {
-            const std::uint64_t selection = step.selectionAfter;
+            SelectionIds selection = step.selectionAfter;
             m_undo.push_back(std::move(step));
             return selection;
         }

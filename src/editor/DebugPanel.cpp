@@ -60,6 +60,14 @@ void DebugPanel::draw(const OverlayContext& context)
             usageRow("Draws", s.draws, s.drawCapacity);
             usageRow("Tex layers", s.textureLayers, s.textureLayerCapacity);
             ImGui::TextDisabled("Layer size %dx%d", s.textureSize, s.textureSize);
+            ImGui::Text("%zu lights, %zu cluster refs", s.lights, s.clusterRefs);
+
+            bool prepass = renderer.depthPrepass();
+            if (ImGui::Checkbox("Depth prepass", &prepass))
+                renderer.setDepthPrepass(prepass);
+            Renderer::ShadowSettings& shadows = renderer.shadowSettings();
+            ImGui::Checkbox("Shadows", &shadows.enabled);
+            ImGui::SliderFloat("Shadow distance", &shadows.distance, 5.0f, 100.0f, "%.0f m");
         }
 
         if (ImGui::CollapsingHeader("Shaders", ImGuiTreeNodeFlags_DefaultOpen)) {

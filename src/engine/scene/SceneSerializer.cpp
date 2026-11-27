@@ -324,7 +324,8 @@ static void resolvePending(Scene& scene, const RefMap& refs, const std::vector<P
 // Creates the entities of a document. Ones whose parent isn't in the document go under
 // parent, starting at index. Returns the created entities in document order.
 static std::vector<entt::entity> instantiate(Scene& scene, const ComponentRegistry& components,
-                                             const json& jsonEntities, entt::entity parent, std::size_t index)
+                                             const json& jsonEntities, entt::entity parent, std::size_t index,
+                                             bool freshUuids = false)
 {
     entt::registry& registry = scene.registry();
     RefMap refs;
@@ -348,7 +349,7 @@ static std::vector<entt::entity> instantiate(Scene& scene, const ComponentRegist
 
         const auto savedUuid = jsonEntity.find("uuid");
         const std::uint64_t uuid = savedUuid == jsonEntity.end() ? 0 : parseUuid(*savedUuid);
-        const entt::entity e = scene.createGameObject("", entityParent, uuid, entityIndex);
+        const entt::entity e = scene.createGameObject("", entityParent, freshUuids ? 0 : uuid, entityIndex);
         created.push_back(e);
         if (uuid != 0)
             refs.byUuid[uuid] = e;
@@ -408,13 +409,13 @@ bool loadScene(Scene& scene, const ComponentRegistry& components, std::string_vi
 }
 
 entt::entity loadEntityTree(Scene& scene, const ComponentRegistry& components, std::string_view text,
-                            entt::entity parent, std::size_t index)
+                            entt::entity parent, std::size_t index, bool freshUuids)
 {
     const json root = json::parse(text, nullptr, false);
     const json* entities = findEntities(root, nullptr);
     if (!entities)
         return entt::null;
-    const std::vector<entt::entity> created = instantiate(scene, components, *entities, parent, index);
+    const std::vector<entt::entity> created = instantiate(scene, components, *entities, parent, index, freshUuids);
     return created.empty() ? entt::null : created.front();
 }
 

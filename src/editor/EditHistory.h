@@ -10,6 +10,9 @@
 class ComponentRegistry;
 class Scene;
 
+// A selection as uuids, active one last
+using SelectionIds = std::vector<std::uint64_t>;
+
 struct EditContext
 {
     Scene& scene;
@@ -39,8 +42,8 @@ private:
     {
         std::unique_ptr<EditCommand> command;  // nullptr: selection change only
         std::string name;                      // for selection-only steps
-        std::uint64_t selectionBefore = 0;
-        std::uint64_t selectionAfter = 0;
+        SelectionIds selectionBefore;
+        SelectionIds selectionAfter;
     };
 
     std::vector<Step> m_undo;
@@ -57,11 +60,11 @@ public:
 
     // Once per frame: the selection at the last call and now. Fills in the selection of
     // the steps pushed since then, or records a selection-only step if it changed.
-    void endFrame(std::uint64_t selectionBefore, std::uint64_t selectionAfter, std::string selectName);
+    void endFrame(const SelectionIds& selectionBefore, const SelectionIds& selectionAfter, std::string selectName);
 
-    // Return the selection to restore (0 = none), or nullopt if there was nothing to do
-    std::optional<std::uint64_t> undo(EditContext& context);
-    std::optional<std::uint64_t> redo(EditContext& context);
+    // Return the selection to restore, or nullopt if there was nothing to do
+    std::optional<SelectionIds> undo(EditContext& context);
+    std::optional<SelectionIds> redo(EditContext& context);
     void clear();
 
     bool canUndo() const { return !m_undo.empty(); }
