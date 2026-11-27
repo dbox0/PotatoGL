@@ -9,6 +9,7 @@
 #include "engine/assets/AssetCache.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Scene.h"
+#include "engine/ui/UiComponents.h"
 
 #include <imgui.h>
 
@@ -194,11 +195,12 @@ bool InspectorPanel::drawField(const FieldInfo& field, void* data)
     case FieldType::Enum: {
         const int current = std::get<int>(value);
         const bool known = current >= 0 && static_cast<std::size_t>(current) < field.options.size();
-        const std::string preview = known ? field.options[static_cast<std::size_t>(current)] : std::to_string(current);
+        const std::string preview =
+            known ? nicifyName(field.options[static_cast<std::size_t>(current)]) : std::to_string(current);
         if (ImGui::BeginCombo(field.label.c_str(), preview.c_str())) {
             for (std::size_t i = 0; i < field.options.size(); ++i) {
                 const int option = static_cast<int>(i);
-                if (ImGui::Selectable(field.options[i].c_str(), option == current) && option != current) {
+                if (ImGui::Selectable(nicifyName(field.options[i]).c_str(), option == current) && option != current) {
                     value = option;
                     changed = true;
                 }
@@ -246,7 +248,11 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
                 ImGui::TextDisabled("%zu objects selected, showing the active one", selectionCount);
             ImGui::PushItemWidth(-90.0f);
 
+            // A RectTransform places UI; its Transform is ignored
+            const bool rectTransform = registry.all_of<RectTransform>(selected);
             for (const auto& info : components.all()) {
+                if (rectTransform && info->id == "Transform")
+                    continue;
                 if (!info->isScript && info->has(registry, selected))
                     drawComponent(*info, scene, selected);
             }

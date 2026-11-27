@@ -4,6 +4,8 @@
 #include "engine/core/EventBus.h"
 #include "engine/core/Input.h"
 #include "engine/scene/ComponentReflection.h"
+#include "engine/ui/UiLayout.h"
+#include "engine/ui/UiReflection.h"
 
 #include <glad/gl.h>
 
@@ -28,6 +30,7 @@ App::~App()
     m_game.reset();
     if (m_overlay)
         m_overlay->shutdown();  // GL objects must die before the context
+    m_ui.reset();
     m_renderer.reset();
     if (m_context)
         SDL_GL_DestroyContext(m_context);
@@ -83,6 +86,9 @@ bool App::init(const char* title, int width, int height)
     if (!m_renderer)
         return false;
     m_assets.setRenderer(m_renderer.get());
+    m_ui = UIRenderer::create();
+    if (!m_ui)
+        return false;
     if (m_overlay && !m_overlay->init(m_window, m_context)) {
         std::fprintf(stderr, "Failed to init overlay\n");
         return false;
@@ -99,6 +105,7 @@ bool App::init(const char* title, int width, int height)
     m_scene.registry().ctx().emplace<Input>();
     m_scene.registry().ctx().emplace<EventBus>();
     registerSceneComponents(m_components);
+    registerUiComponents(m_components);
     if (m_game && !m_game->init(gameContext()))
         return false;
     m_controller.syncFrom(m_camera);
@@ -202,6 +209,13 @@ void App::renderToWindow()
         view = ViewMatrices{m_camera.getView(), m_camera.getProjection()};
     }
     m_renderer->render(*view, nullptr, m_fbWidth, m_fbHeight);
+
+    GpuScope scope(m_renderer->profiler(), "UI");
+    const glm::vec2 size(static_cast<float>(m_fbWidth), static_cast<float>(m_fbHeight));
+    uiLayoutSystem(m_scene, size);
+    m_ui->begin(size);
+    m_ui->drawCanvases(m_scene);
+    m_ui->end(nullptr, m_fbWidth, m_fbHeight);
 }
 
 // Mouse in game pixels: the Game view's image in the editor, else the window
@@ -277,6 +291,8 @@ void App::run()
         updateInput();
         m_controller.update(dt, m_camera);
         m_renderer->pollShaderChanges();
+        if (m_renderer->shaderAutoReload())
+            m_ui->pollShaderChanges();
 
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
@@ -303,7 +319,7 @@ void App::run()
             renderToWindow();
         }
         if (m_overlay) {
-            GpuScope scope(profiler, "UI");
+            GpuScope scope(profiler, "Editor UI");
             m_overlay->render();
         }
         profiler.endFrame();

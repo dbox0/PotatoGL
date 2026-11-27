@@ -9,11 +9,13 @@
 #include "engine/core/Paths.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
+#include "engine/render/UIRenderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Prefab.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
+#include "engine/ui/UiLayout.h"
 
 #include <imgui.h>
 #include <imgui_impl_opengl3.h>
@@ -293,8 +295,15 @@ void Editor::renderViews(const OverlayContext& context)
     syncSelectedTag(context.scene.registry());
     if (m_gameView.visible()) {
         GpuScope scope(context.renderer.profiler(), "Game View");
+        const RenderTarget& target = m_gameView.target();
         if (const auto view = context.scene.gameCameraView(m_gameView.aspect()))
-            context.renderer.render(*view, m_gameView.target());
+            context.renderer.render(*view, target);
+        GpuScope uiScope(context.renderer.profiler(), "UI");
+        const glm::vec2 size(static_cast<float>(target.width()), static_cast<float>(target.height()));
+        uiLayoutSystem(context.scene, size);
+        context.ui.begin(size);
+        context.ui.drawCanvases(context.scene);
+        context.ui.end(&target, target.width(), target.height());
     }
     m_thumbnails.process(context.renderer, context.assets, 4);
 }

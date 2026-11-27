@@ -125,6 +125,7 @@ add_library(engine STATIC
         src/engine/assets/Primitives.cpp
         src/engine/assets/Primitives.h
         src/engine/core/InplaceFunction.h
+        src/engine/core/EventBus.h
         src/engine/core/Input.h
         src/engine/core/LogCapture.cpp
         src/engine/core/LogCapture.h
@@ -161,6 +162,8 @@ add_library(engine STATIC
         src/engine/render/LightClusters.h
         src/engine/render/Renderer.cpp
         src/engine/render/Renderer.h
+        src/engine/render/UIRenderer.cpp
+        src/engine/render/UIRenderer.h
         src/engine/scene/Camera.cpp
         src/engine/scene/Camera.h
         src/engine/scene/ComponentReflection.cpp
@@ -177,7 +180,13 @@ add_library(engine STATIC
         src/engine/script/ScriptContext.h
         src/engine/script/ScriptRegistry.h
         src/engine/script/ScriptRunner.cpp
-        src/engine/script/ScriptRunner.h)
+        src/engine/script/EventListeners.h
+        src/engine/script/ScriptRunner.h
+        src/engine/ui/UiComponents.h
+        src/engine/ui/UiLayout.cpp
+        src/engine/ui/UiLayout.h
+        src/engine/ui/UiReflection.cpp
+        src/engine/ui/UiReflection.h)
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image nlohmann_json::nlohmann_json)
 # Debug and editor builds read the source tree, so shader edits hot reload and the editor's

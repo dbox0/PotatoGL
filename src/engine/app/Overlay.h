@@ -10,10 +10,12 @@ class CameraController;
 class ComponentRegistry;
 class Renderer;
 class Scene;
+class UIRenderer;
 
 struct OverlayContext
 {
     Renderer& renderer;
+    UIRenderer& ui;
     AssetCache& assets;
     Scene& scene;
     Camera& camera;  // editor camera

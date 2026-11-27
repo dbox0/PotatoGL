@@ -7,6 +7,7 @@
 #include "engine/app/PlayMode.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
+#include "engine/render/UIRenderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
 
@@ -20,6 +21,7 @@ private:
     SDL_Window* m_window = nullptr;
     SDL_GLContext m_context = nullptr;
     std::unique_ptr<Renderer> m_renderer;
+    std::unique_ptr<UIRenderer> m_ui;
     AssetCache m_assets;
     Camera m_camera;
     CameraController m_controller;
@@ -39,7 +41,7 @@ private:
     GameContext gameContext() { return {*m_renderer, m_scene, m_camera, m_components}; }
     OverlayContext overlayContext()
     {
-        return {*m_renderer, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode, m_animationPreview};
+        return {*m_renderer, *m_ui, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode, m_animationPreview};
     }
     Scene& activeScene();
     void updateAnimators(Scene& scene, float dt);
