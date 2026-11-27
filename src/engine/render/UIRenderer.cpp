@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <iterator>
 
 std::unique_ptr<UIRenderer> UIRenderer::create()
 {
@@ -101,6 +102,8 @@ void UIRenderer::drawElement(const Scene& scene, entt::entity e)
 {
     const entt::registry& registry = scene.registry();
     const UIRect& rect = registry.get<UIRect>(e);
+    if (const UIImage* image = registry.try_get<UIImage>(e))
+        drawImage(*image, rect);
     if (const UIShape* shape = registry.try_get<UIShape>(e))
         drawShape(*shape, rect);
     scene.forEachChild(e, [&](entt::entity child) {
@@ -152,6 +155,115 @@ void UIRenderer::drawShape(const UIShape& shape, const UIRect& rect)
     }
     const Vertex quad[6] = {corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]};
     addTriangles(0, quad, 6);
+}
+
+void UIRenderer::imageQuad(GLuint texture, const UIRect& rect, glm::vec2 min, glm::vec2 max, glm::vec2 uvMin,
+                           glm::vec2 uvMax, std::uint32_t color)
+{
+    if (max.x <= min.x || max.y <= min.y)
+        return;
+    const glm::vec2 local[4] = {min, {max.x, min.y}, max, {min.x, max.y}};
+    const glm::vec2 uv[4] = {uvMin, {uvMax.x, uvMin.y}, uvMax, {uvMin.x, uvMax.y}};
+    Vertex corners[4];
+    for (int i = 0; i < 4; ++i) {
+        const glm::vec3 p = rect.toScreen * glm::vec3(local[i], 1.0f);
+        corners[i] = {glm::vec2(p), uv[i], color, 0u, glm::vec4(0.0f), Image};
+    }
+    const Vertex quad[6] = {corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]};
+    addTriangles(texture, quad, 6);
+}
+
+// A point on the [-1, 1] square's edge, angle clockwise from straight up (y down)
+static glm::vec2 squareEdge(float angle)
+{
+    const glm::vec2 d(std::sin(angle), -std::cos(angle));
+    return d / std::max(std::abs(d.x), std::abs(d.y));
+}
+
+void UIRenderer::drawImage(const UIImage& image, const UIRect& rect)
+{
+    const GLuint texture = image.texture != InvalidTexture ? image.texture : m_white;
+    const std::uint32_t color = packColor(image.color);
+    glm::vec2 min = glm::min(rect.min, rect.max), max = glm::max(rect.min, rect.max);
+    const glm::vec2 textureSize = image.texture != InvalidTexture ? image.textureSize : glm::vec2(0.0f);
+
+    if (image.type == UIImageType::Sliced && textureSize.x > 0.0f && textureSize.y > 0.0f) {
+        // left, top, right, bottom; shrunk evenly where the rect is too small for them
+        glm::vec4 border = glm::max(image.border, glm::vec4(0.0f));
+        const glm::vec2 size = max - min;
+        const float sx = border.x + border.z > size.x ? size.x / (border.x + border.z) : 1.0f;
+        const float sy = border.y + border.w > size.y ? size.y / (border.y + border.w) : 1.0f;
+        const float xs[4] = {min.x, min.x + border.x * sx, max.x - border.z * sx, max.x};
+        const float ys[4] = {min.y, min.y + border.y * sy, max.y - border.w * sy, max.y};
+        const float us[4] = {0.0f, border.x / textureSize.x, 1.0f - border.z / textureSize.x, 1.0f};
+        const float vs[4] = {0.0f, border.y / textureSize.y, 1.0f - border.w / textureSize.y, 1.0f};
+        for (int y = 0; y < 3; ++y) {
+            for (int x = 0; x < 3; ++x)
+                imageQuad(texture, rect, {xs[x], ys[y]}, {xs[x + 1], ys[y + 1]}, {us[x], vs[y]}, {us[x + 1], vs[y + 1]},
+                          color);
+        }
+        return;
+    }
+
+    if (image.preserveAspect && textureSize.x > 0.0f && textureSize.y > 0.0f) {
+        const glm::vec2 size = max - min;
+        const float scale = std::min(size.x / textureSize.x, size.y / textureSize.y);
+        const glm::vec2 fitted = textureSize * scale;
+        min += (size - fitted) * 0.5f;
+        max = min + fitted;
+    }
+    if (image.type != UIImageType::Filled) {
+        imageQuad(texture, rect, min, max, glm::vec2(0.0f), glm::vec2(1.0f), color);
+        return;
+    }
+
+    const float fill = std::clamp(image.fillAmount, 0.0f, 1.0f);
+    if (fill <= 0.0f)
+        return;
+    const bool fromEnd = image.fillOrigin == UIFillOrigin::RightOrTop;
+    switch (image.fillMethod) {
+    case UIFillMethod::Horizontal: {
+        const float x = fromEnd ? max.x - (max.x - min.x) * fill : min.x + (max.x - min.x) * fill;
+        if (fromEnd)
+            imageQuad(texture, rect, {x, min.y}, max, {1.0f - fill, 0.0f}, glm::vec2(1.0f), color);
+        else
+            imageQuad(texture, rect, min, {x, max.y}, glm::vec2(0.0f), {fill, 1.0f}, color);
+        break;
+    }
+    case UIFillMethod::Vertical: {
+        const float y = fromEnd ? min.y + (max.y - min.y) * fill : max.y - (max.y - min.y) * fill;
+        if (fromEnd)
+            imageQuad(texture, rect, min, {max.x, y}, glm::vec2(0.0f), {1.0f, fill}, color);
+        else
+            imageQuad(texture, rect, {min.x, y}, max, {0.0f, 1.0f - fill}, glm::vec2(1.0f), color);
+        break;
+    }
+    case UIFillMethod::Radial360: {
+        // A fan from the centre, broken at every corner and edge midpoint (multiples of 45 degrees)
+        constexpr float pi = 3.14159265358979f;
+        const float start = fromEnd ? 0.0f : pi;
+        const float sweep = fill * 2.0f * pi;
+        const glm::vec2 centre = (min + max) * 0.5f, half = (max - min) * 0.5f;
+        const auto vertex = [&](glm::vec2 unit) {
+            const glm::vec2 local = centre + unit * half;
+            const glm::vec3 p = rect.toScreen * glm::vec3(local, 1.0f);
+            return Vertex{glm::vec2(p), unit * 0.5f + 0.5f, color, 0u, glm::vec4(0.0f), Image};
+        };
+        Vertex tris[8 * 3];
+        std::size_t count = 0;
+        const Vertex mid = vertex(glm::vec2(0.0f));
+        float from = 0.0f;
+        while (from < sweep - 1e-5f && count < std::size(tris)) {
+            const float to = std::min((std::floor(from / (pi * 0.25f) + 1e-4f) + 1.0f) * pi * 0.25f, sweep);
+            tris[count++] = mid;
+            tris[count++] = vertex(squareEdge(start + from));
+            tris[count++] = vertex(squareEdge(start + to));
+            from = to;
+        }
+        addTriangles(texture, tris, count);
+        break;
+    }
+    }
 }
 
 void UIRenderer::end(const RenderTarget* target, int width, int height)

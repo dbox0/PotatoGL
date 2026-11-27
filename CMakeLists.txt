@@ -124,6 +124,8 @@ add_library(engine STATIC
         src/engine/assets/Model.h
         src/engine/assets/Primitives.cpp
         src/engine/assets/Primitives.h
+        src/engine/assets/SpriteMeta.cpp
+        src/engine/assets/SpriteMeta.h
         src/engine/core/InplaceFunction.h
         src/engine/core/EventBus.h
         src/engine/core/Input.h
@@ -183,6 +185,8 @@ add_library(engine STATIC
         src/engine/script/EventListeners.h
         src/engine/script/ScriptRunner.h
         src/engine/ui/UiComponents.h
+        src/engine/ui/UiHitTest.cpp
+        src/engine/ui/UiHitTest.h
         src/engine/ui/UiLayout.cpp
         src/engine/ui/UiLayout.h
         src/engine/ui/UiReflection.cpp
@@ -213,6 +217,8 @@ if(BUILD_EDITOR)
             src/editor/AnimationViewer.h
             src/editor/AssetOps.cpp
             src/editor/AssetOps.h
+            src/editor/CanvasPanel.cpp
+            src/editor/CanvasPanel.h
             src/editor/ConsolePanel.cpp
             src/editor/ConsolePanel.h
             src/editor/DebugPanel.cpp

@@ -6,6 +6,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -66,9 +67,29 @@ std::unique_ptr<Renderer> Renderer::create(const Config& config)
         !renderer->m_outlineShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/outline.frag")) ||
         !renderer->m_tonemapShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/tonemap.frag")) ||
         !renderer->m_depthShader.load(meshVert, resourcePath("shaders/depth.frag")) ||
-        !renderer->m_skinShader.loadCompute(resourcePath("shaders/skin.comp")))
+        !renderer->m_skinShader.loadCompute(resourcePath("shaders/skin.comp")) ||
+        !renderer->m_spriteShader.load(resourcePath("shaders/sprite.vert"), resourcePath("shaders/sprite.frag")) ||
+        !renderer->m_spritePickShader.load(resourcePath("shaders/sprite.vert"), resourcePath("shaders/spritePick.frag")))
         return nullptr;
     renderer->onShadersLoaded();
+
+    glGenVertexArrays(1, &renderer->m_spriteVao);
+    glGenBuffers(1, &renderer->m_spriteVbo);
+    glBindVertexArray(renderer->m_spriteVao);
+    glBindBuffer(GL_ARRAY_BUFFER, renderer->m_spriteVbo);
+    constexpr GLsizei stride = sizeof(SpriteVertex);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(SpriteVertex, pos)));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(SpriteVertex, normal)));
+    glEnableVertexAttribArray(2);
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(SpriteVertex, uv)));
+    glEnableVertexAttribArray(3);
+    glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(offsetof(SpriteVertex, color)));
+    glEnableVertexAttribArray(4);
+    glVertexAttribIPointer(4, 2, GL_UNSIGNED_INT, stride, reinterpret_cast<void*>(offsetof(SpriteVertex, flags)));
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
     return renderer;
 }
 
@@ -80,6 +101,8 @@ Renderer::~Renderer()
     glDeleteBuffers(1, &m_clusterLightSsbo);
     glDeleteBuffers(1, &m_materialSsbo);
     glDeleteVertexArrays(1, &m_emptyVao);
+    glDeleteBuffers(1, &m_spriteVbo);
+    glDeleteVertexArrays(1, &m_spriteVao);
 }
 
 void Renderer::onShadersLoaded()
@@ -405,7 +428,86 @@ void Renderer::clearInstances()
     m_instanceDraws.clear();
     m_skinnedRanges.clear();
     m_skinnedDraws.clear();
+    m_sprites.clear();
     m_drawsDirty = true;
+}
+
+void Renderer::buildSprites(const glm::vec4* sortDepth)
+{
+    m_spriteOrder.resize(m_sprites.size());
+    for (std::uint32_t i = 0; i < m_spriteOrder.size(); ++i)
+        m_spriteOrder[i] = i;
+    if (sortDepth) {
+        const glm::vec4 d = *sortDepth;
+        const auto depth = [&](const SpriteDraw& s) { return glm::dot(glm::vec3(d), glm::vec3(s.world[3])) + d.w; };
+        std::stable_sort(m_spriteOrder.begin(), m_spriteOrder.end(), [&](std::uint32_t a, std::uint32_t b) {
+            const SpriteDraw& sa = m_sprites[a];
+            const SpriteDraw& sb = m_sprites[b];
+            if (sa.sortOrder != sb.sortOrder)
+                return sa.sortOrder < sb.sortOrder;
+            return depth(sa) > depth(sb);
+        });
+    }
+
+    m_spriteVertices.clear();
+    m_spriteBatches.clear();
+    for (const std::uint32_t index : m_spriteOrder) {
+        const SpriteDraw& s = m_sprites[index];
+        const glm::vec3 x = glm::vec3(s.world[0]) * s.size.x;
+        const glm::vec3 y = glm::vec3(s.world[1]) * s.size.y;
+        const glm::vec3 centre(s.world[3]);
+        const glm::vec3 cross = glm::cross(x, y);
+        const glm::vec3 normal = glm::dot(cross, cross) > 1e-12f ? glm::normalize(cross) : glm::vec3(0.0f, 0.0f, 1.0f);
+        const std::uint32_t flags = (s.lit ? 1u : 0u) | (s.receiveShadows ? 2u : 0u);
+        const auto vertex = [&](float fx, float fy, float u, float v) {
+            return SpriteVertex{centre + x * fx + y * fy, normal, {u, v}, s.color, flags, s.entityId};
+        };
+        const SpriteVertex topLeft = vertex(-0.5f, 0.5f, s.uv.x, s.uv.y);
+        const SpriteVertex topRight = vertex(0.5f, 0.5f, s.uv.z, s.uv.y);
+        const SpriteVertex bottomRight = vertex(0.5f, -0.5f, s.uv.z, s.uv.w);
+        const SpriteVertex bottomLeft = vertex(-0.5f, -0.5f, s.uv.x, s.uv.w);
+        if (m_spriteBatches.empty() || m_spriteBatches.back().texture != s.texture)
+            m_spriteBatches.push_back({s.texture, static_cast<GLint>(m_spriteVertices.size()), 0});
+        m_spriteVertices.insert(m_spriteVertices.end(), {bottomLeft, bottomRight, topRight, bottomLeft, topRight, topLeft});
+        m_spriteBatches.back().count += 6;
+    }
+
+    glBindBuffer(GL_ARRAY_BUFFER, m_spriteVbo);
+    const auto bytes = static_cast<GLsizeiptr>(m_spriteVertices.size() * sizeof(SpriteVertex));
+    glBufferData(GL_ARRAY_BUFFER, bytes, nullptr, GL_STREAM_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bytes, m_spriteVertices.data());
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+void Renderer::drawSprites() const
+{
+    glBindVertexArray(m_spriteVao);
+    glActiveTexture(GL_TEXTURE0);
+    for (const SpriteBatch& batch : m_spriteBatches) {
+        glBindTexture(GL_TEXTURE_2D, batch.texture);
+        glDrawArrays(GL_TRIANGLES, batch.first, batch.count);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glBindVertexArray(0);
+}
+
+void Renderer::setLightingUniforms(const Shader& shader, const glm::mat4& viewProj, const glm::vec4& eye,
+                                   const glm::vec4& viewDepth, int width, int height, bool shadows) const
+{
+    Shader::setMat4(shader.uniformLocation("uViewProj"), viewProj);
+    glUniform4fv(shader.uniformLocation("uEye"), 1, &eye.x);
+    glUniform4fv(shader.uniformLocation("uViewDepth"), 1, &viewDepth.x);
+    glUniform2f(shader.uniformLocation("uClusterTile"), static_cast<float>(LightClusters::X) / static_cast<float>(width),
+                static_cast<float>(LightClusters::Y) / static_cast<float>(height));
+    glUniform3fv(shader.uniformLocation("uClusterZ"), 1, &m_clusters.sliceParams().x);
+    glUniform3fv(shader.uniformLocation("uSunDirection"), 1, &m_sunDirection.x);
+    glUniform3fv(shader.uniformLocation("uSunRadiance"), 1, &m_sunRadiance.x);
+    glUniform3fv(shader.uniformLocation("uSkyColor"), 1, &m_skyColor.x);
+    glUniform3fv(shader.uniformLocation("uGroundColor"), 1, &m_groundColor.x);
+    glUniform1i(shader.uniformLocation("uShadows"), shadows ? 1 : 0);
+    Shader::setMat4(shader.uniformLocation("uShadowMatrix"), m_shadowMatrix);
+    glUniform1f(shader.uniformLocation("uShadowNormalOffset"), m_shadowNormalOffset);
+    glUniform1f(shader.uniformLocation("uShadowDistance"), m_shadowSettings.distance);
 }
 
 void Renderer::clearLights()
@@ -684,6 +786,21 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
         glDepthMask(GL_TRUE);
     }
 
+    if (!m_sprites.empty()) {
+        GpuScope scope(m_profiler, "Sprites");
+        buildSprites(&viewDepth);
+        m_spriteShader.use();
+        setLightingUniforms(m_spriteShader, viewProj, eye, viewDepth, width, height, shadows);
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glDepthMask(GL_FALSE);
+        glDepthFunc(GL_LEQUAL);
+        drawSprites();
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glDisable(GL_BLEND);
+    }
+
     {
         GpuScope scope(m_profiler, "Tonemap");
         if (target)
@@ -722,6 +839,8 @@ void Renderer::renderPreview(ModelId model, MaterialId material, const RenderTar
     m_skinnedRanges.swap(m_previewSkinnedRanges);
     m_skinnedDraws.swap(m_previewSkinnedDraws);
     m_lights.swap(m_previewLights);
+    m_previewSprites.clear();
+    m_sprites.swap(m_previewSprites);
     const glm::vec3 sunDirection = m_sunDirection, sunRadiance = m_sunRadiance;
     const glm::vec3 sky = m_skyColor, ground = m_groundColor, clear = m_clearColor;
     const float exposure = m_exposure;
@@ -757,6 +876,7 @@ void Renderer::renderPreview(ModelId model, MaterialId material, const RenderTar
     m_skinnedRanges.swap(m_previewSkinnedRanges);
     m_skinnedDraws.swap(m_previewSkinnedDraws);
     m_lights.swap(m_previewLights);
+    m_sprites.swap(m_previewSprites);
     m_sunDirection = sunDirection;
     m_sunRadiance = sunRadiance;
     m_skyColor = sky;
@@ -778,6 +898,12 @@ void Renderer::renderIds(const glm::mat4& viewProj, const PickBuffer& target)
     m_pickShader.use();
     Shader::setMat4(m_pickViewProjLocation, viewProj);
     drawScene(false);
+    if (!m_sprites.empty()) {
+        buildSprites(nullptr);
+        m_spritePickShader.use();
+        Shader::setMat4(m_spritePickShader.uniformLocation("uViewProj"), viewProj);
+        drawSprites();
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -870,6 +996,9 @@ void Renderer::pollShaderChanges()
     const bool tonemap = m_tonemapShader.reloadIfChanged();
     const bool depth = m_depthShader.reloadIfChanged();
     const bool skin = m_skinShader.reloadIfChanged();
+    const bool sprite = m_spriteShader.reloadIfChanged() | m_spritePickShader.reloadIfChanged();
+    if (sprite)
+        std::printf("Sprite shaders reloaded\n");
     if (skin) {
         for (Skin& s : m_skins)
             s.dirty = s.model != InvalidModel;

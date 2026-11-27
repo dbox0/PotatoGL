@@ -11,6 +11,8 @@
 #include "engine/scene/Scene.h"
 #include "engine/ui/UiComponents.h"
 
+#include <glm/glm.hpp>
+
 #include <imgui.h>
 
 #include <algorithm>
@@ -236,6 +238,7 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
 {
     m_history = &history;
     m_assets = &assets;
+    m_components = &components;
     entt::registry& registry = scene.registry();
     if (ImGui::Begin("Inspector")) {
         if ((selected == entt::null || !registry.valid(selected)) && !asset.empty()) {
@@ -307,6 +310,8 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                     m_jointNames = skeleton->names;
             }
         }
+        if (info.id == "RectTransform")
+            drawAnchorPresets(info, scene, e);
         const bool driven = info.id == "Transform" && registry.all_of<BoneSocket>(e);
         if (driven)
             ImGui::TextDisabled("Driven by the Bone Socket");
@@ -351,6 +356,82 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
         }
     }
     ImGui::PopID();
+}
+
+// Unity's 4x4 grid: left, centre, right, stretch by top, middle, bottom, stretch (y down).
+// The rect stays where it is; Shift also sets the pivot, Alt also moves it onto the anchors.
+void InspectorPanel::drawAnchorPresets(const ComponentInfo& info, Scene& scene, entt::entity e)
+{
+    static const glm::vec2 Ranges[4] = {{0.0f, 0.0f}, {0.5f, 0.5f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    entt::registry& registry = scene.registry();
+    RectTransform& rt = registry.get<RectTransform>(e);
+    if (ImGui::Button("Anchor Presets"))
+        ImGui::OpenPopup("##anchorPresets");
+    if (!ImGui::BeginPopup("##anchorPresets"))
+        return;
+    ImGui::TextDisabled("Shift: also set pivot   Alt: also set position");
+    const ImGuiIO& io = ImGui::GetIO();
+    constexpr float cell = 38.0f;
+    for (int row = 0; row < 4; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            const glm::vec2 h = Ranges[col], v = Ranges[row];
+            ImGui::PushID(row * 4 + col);
+            if (col > 0)
+                ImGui::SameLine();
+            const ImVec2 p = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::InvisibleButton("##preset", ImVec2(cell, cell));
+            const bool current = rt.anchorMin == glm::vec2(h.x, v.x) && rt.anchorMax == glm::vec2(h.y, v.y);
+            ImDrawList* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(p, ImVec2(p.x + cell, p.y + cell),
+                                ImGui::IsItemHovered() ? IM_COL32(80, 80, 90, 255) : IM_COL32(50, 50, 55, 255), 3.0f);
+            if (current)
+                draw->AddRect(p, ImVec2(p.x + cell, p.y + cell), IM_COL32(60, 150, 255, 255), 3.0f, 0, 2.0f);
+            const ImVec2 lo(p.x + 7.0f, p.y + 7.0f), hi(p.x + cell - 7.0f, p.y + cell - 7.0f);
+            draw->AddRect(lo, hi, IM_COL32(150, 150, 150, 255));
+            const auto span = [](float from, float to, glm::vec2 range) {
+                constexpr float box = 8.0f;
+                if (range.x != range.y)
+                    return glm::vec2(from, to);
+                const float at = from + (to - from) * range.x;
+                return glm::vec2(std::clamp(at - box * 0.5f, from, to - box), std::clamp(at + box * 0.5f, from + box, to));
+            };
+            const glm::vec2 xs = span(lo.x, hi.x, h), ys = span(lo.y, hi.y, v);
+            draw->AddRectFilled(ImVec2(xs.x + 2.0f, ys.x + 2.0f), ImVec2(xs.y - 2.0f, ys.y - 2.0f), IM_COL32(220, 90, 90, 255));
+            if (clicked) {
+                const RectTransform before = rt;
+                const glm::vec2 anchorMin(h.x, v.x), anchorMax(h.y, v.y);
+                glm::vec2 pivot = rt.pivot;
+                if (io.KeyShift)
+                    pivot = glm::vec2(h.x == h.y ? h.x : 0.5f, v.x == v.y ? v.x : 0.5f);
+                const UIRect* rect = registry.try_get<UIRect>(e);
+                const UIRect* parentRect = registry.try_get<UIRect>(scene.parentOf(e));
+                if (rect && parentRect) {
+                    const glm::vec2 size = rect->max - rect->min;
+                    const glm::vec2 parentSize = parentRect->max - parentRect->min;
+                    const glm::vec2 aMin = parentRect->min + anchorMin * parentSize;
+                    const glm::vec2 aMax = parentRect->min + anchorMax * parentSize;
+                    rt.sizeDelta = size - (aMax - aMin);
+                    rt.anchoredPosition = rect->min + size * pivot - (aMin + (aMax - aMin) * pivot);
+                }
+                rt.anchorMin = anchorMin;
+                rt.anchorMax = anchorMax;
+                rt.pivot = pivot;
+                if (io.KeyAlt) {
+                    rt.anchoredPosition = glm::vec2(0.0f);
+                    if (h.x != h.y)
+                        rt.sizeDelta.x = 0.0f;
+                    if (v.x != v.y)
+                        rt.sizeDelta.y = 0.0f;
+                }
+                EditContext context{scene, *m_components};
+                if (auto command = componentEditCommand(context, e, info, &before, &rt, "Anchor Preset"))
+                    m_history->push(std::move(command));
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndPopup();
 }
 
 void InspectorPanel::drawAddMenu(const char* button, bool scripts, const ComponentRegistry& components,
@@ -420,6 +501,23 @@ void InspectorPanel::drawAsset(const std::string& ref, AssetCache& assets, Thumb
         if (image)
             ImGui::Text("%d x %d", image.sourceWidth, image.sourceHeight);
         ImGui::TextDisabled("Imported as sRGB color, scaled to the texture array's layer size");
+        ImGui::TextDisabled("Sprites and UI images use it at full size");
+
+        ImGui::SeparatorText("Sprite");
+        SpriteMeta meta = assets.spriteMeta(ref);
+        bool changed = ImGui::DragFloat4("Border", &meta.border.x, 0.5f, 0.0f, 8192.0f, "%.0f");
+        bool commit = ImGui::IsItemDeactivatedAfterEdit();
+        ImGui::SetItemTooltip("Left, top, right, bottom, in pixels; Sliced UI images keep them unscaled");
+        changed |= ImGui::DragFloat("Pixels Per Unit", &meta.pixelsPerUnit, 1.0f, 1.0f, 10000.0f, "%.0f");
+        commit |= ImGui::IsItemDeactivatedAfterEdit();
+        int filter = static_cast<int>(meta.filter);
+        if (ImGui::Combo("Filter", &filter, "Linear\0Point\0")) {
+            meta.filter = static_cast<SpriteFilter>(filter);
+            changed = commit = true;
+        }
+        meta.pixelsPerUnit = std::max(meta.pixelsPerUnit, 1.0f);
+        if (changed || commit)
+            assets.setSpriteMeta(ref, meta, commit);
         break;
     }
     case AssetKind::Model:

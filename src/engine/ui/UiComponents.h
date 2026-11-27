@@ -1,6 +1,10 @@
 #pragma once
 
+#include "engine/assets/AssetTypes.h"
+
 #include <glm/glm.hpp>
+
+#include <string>
 
 // UI lives under a Canvas, laid out in canvas pixels: screen pixels / canvas scale,
 // origin at the top-left, y down. Anchors and pivots are 0..1 of the parent rect, so
@@ -47,6 +51,43 @@ enum class UIShapeType
     RoundedRect,
     Circle,  // the largest circle centred in the rect
     Line,    // from the rect's left-centre to its right-centre
+};
+
+enum class UIImageType
+{
+    Simple,
+    Sliced,  // 9 quads: the sprite's .meta border stays unscaled
+    Filled,
+};
+
+enum class UIFillMethod
+{
+    Horizontal,
+    Vertical,
+    Radial360,  // clockwise
+};
+
+enum class UIFillOrigin
+{
+    LeftOrBottom,  // radial: starts at the bottom
+    RightOrTop,
+};
+
+// Without a sprite it's a plain rect of color
+struct UIImage
+{
+    std::string sprite;
+    glm::vec4 color{1.0f};  // sRGB
+    UIImageType type = UIImageType::Simple;
+    float fillAmount = 1.0f;
+    UIFillMethod fillMethod = UIFillMethod::Horizontal;
+    UIFillOrigin fillOrigin = UIFillOrigin::LeftOrBottom;
+    bool preserveAspect = false;  // Simple and Filled
+
+    // Runtime, resolved by App each frame; texture is reset when sprite changes
+    TextureId texture = InvalidTexture;
+    glm::vec2 textureSize{0.0f};
+    glm::vec4 border{0.0f};
 };
 
 struct UIShape

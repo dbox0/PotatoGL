@@ -13,6 +13,8 @@
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
+#include "engine/ui/UiComponents.h"
+#include "engine/ui/UiLayout.h"
 
 #include <imgui.h>
 
@@ -43,7 +45,17 @@ constexpr KindInfo Kinds[] = {
     {CreateKind::PointLight, "Point Light", nullptr},
     {CreateKind::SpotLight, "Spot Light", nullptr},
     {CreateKind::Camera, "Camera", nullptr},
+    {CreateKind::UICanvas, "Canvas", nullptr},
+    {CreateKind::UIPanel, "Panel", nullptr},
+    {CreateKind::UIShape, "Shape", nullptr},
+    {CreateKind::UIImage, "Image", nullptr},
 };
+
+bool isUiKind(CreateKind kind)
+{
+    return kind == CreateKind::UICanvas || kind == CreateKind::UIPanel || kind == CreateKind::UIShape ||
+           kind == CreateKind::UIImage;
+}
 
 const KindInfo& kindInfo(CreateKind kind)
 {
@@ -161,6 +173,11 @@ void SceneActions::drawCreateItems(entt::entity parent)
         ImGui::EndMenu();
     }
     item(CreateKind::Camera);
+    if (ImGui::BeginMenu("UI")) {
+        for (const CreateKind kind : {CreateKind::UICanvas, CreateKind::UIPanel, CreateKind::UIShape, CreateKind::UIImage})
+            item(kind);
+        ImGui::EndMenu();
+    }
 }
 
 void SceneActions::drawEditItems(bool hasSelection)
@@ -206,9 +223,65 @@ void SceneActions::apply(EditContext& context, EditHistory& history, Selection& 
     m_requests.clear();
 }
 
+// Under the requested parent, else the selection, if that is or is under a Canvas; otherwise
+// a new Canvas is made first. The whole new subtree is one undo step.
+void SceneActions::applyCreateUi(EditContext& context, EditHistory& history, Selection& selection,
+                                 const Request& request)
+{
+    Scene& scene = context.scene;
+    entt::registry& registry = scene.registry();
+    const KindInfo& info = kindInfo(request.kind);
+    entt::entity created = entt::null;
+    entt::entity parent = entt::null;
+    if (request.kind != CreateKind::UICanvas) {
+        entt::entity anchor = request.parent != entt::null && registry.valid(request.parent) ? request.parent
+                                                                                              : selection.active();
+        if (anchor != entt::null && registry.valid(anchor) && uiCanvasOf(scene, anchor) != entt::null &&
+            (registry.all_of<Canvas>(anchor) || registry.all_of<RectTransform>(anchor)))
+            parent = anchor;
+    }
+    if (parent == entt::null) {
+        const entt::entity top = request.kind == CreateKind::UICanvas ? parentFor(context, request.parent)
+                                                                      : parentFor(context, entt::null);
+        parent = scene.createGameObject("Canvas", top);
+        registry.emplace<Canvas>(parent);
+        created = parent;
+        if (request.kind == CreateKind::UICanvas) {
+            history.push(createdEntityCommand(scene, parent));
+            selection.set(parent);
+            return;
+        }
+    }
+
+    const entt::entity e = scene.createGameObject(info.name, parent);
+    RectTransform& rt = registry.emplace<RectTransform>(e);
+    switch (request.kind) {
+    case CreateKind::UIPanel:
+        rt.anchorMin = glm::vec2(0.0f);
+        rt.anchorMax = glm::vec2(1.0f);
+        rt.sizeDelta = glm::vec2(0.0f);
+        registry.emplace<UIImage>(e).color = glm::vec4(1.0f, 1.0f, 1.0f, 0.39f);
+        break;
+    case CreateKind::UIShape:
+        registry.emplace<UIShape>(e).shape = UIShapeType::RoundedRect;
+        break;
+    case CreateKind::UIImage:
+        registry.emplace<UIImage>(e);
+        break;
+    default:
+        break;
+    }
+    history.push(createdEntityCommand(scene, created != entt::null ? created : e));
+    selection.set(e);
+}
+
 void SceneActions::applyCreate(EditContext& context, EditHistory& history, Selection& selection,
                                const Request& request, const glm::vec3& spawn)
 {
+    if (isUiKind(request.kind)) {
+        applyCreateUi(context, history, selection, request);
+        return;
+    }
     Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
     const bool topLevel = request.parent == entt::null || !registry.valid(request.parent);

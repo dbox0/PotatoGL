@@ -142,6 +142,9 @@ bool move(const fs::path& from, const fs::path& to, std::string* error)
     fs::rename(from, to, ec);
     if (ec)
         return fail("can't move " + from.filename().string() + ": " + errorText(ec));
+    const fs::path meta = from.string() + ".meta";
+    if (fs::is_regular_file(meta, ec))
+        fs::rename(meta, to.string() + ".meta", ec);
     return true;
 }
 
@@ -157,6 +160,8 @@ std::optional<fs::path> duplicate(const fs::path& path, std::string* error)
             *error = "can't duplicate " + path.filename().string() + ": " + errorText(ec);
         return std::nullopt;
     }
+    if (const fs::path meta = path.string() + ".meta"; !folder && fs::is_regular_file(meta, ec))
+        fs::copy_file(meta, copy.string() + ".meta", ec);
     return copy;
 }
 
@@ -169,6 +174,8 @@ bool remove(const fs::path& path, std::string* error)
     }
     std::error_code ec;
     fs::remove_all(path, ec);
+    if (!ec)
+        fs::remove(path.string() + ".meta", ec);
     if (ec) {
         if (error)
             *error = "can't delete " + path.filename().string() + ": " + errorText(ec);

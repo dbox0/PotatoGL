@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/assets/AssetTypes.h"
 #include "engine/assets/Model.h"
 #include "engine/gfx/DrawData.h"
 #include "engine/gfx/GeometryBuffer.h"
@@ -74,6 +75,20 @@ public:
     // Always exists: white, untextured; used by meshes imported without a material
     static constexpr MaterialId DefaultMaterial = 0;
 
+    // A quad in the local XY plane of world, facing +Z
+    struct SpriteDraw
+    {
+        TextureId texture = InvalidTexture;
+        glm::mat4 world{1.0f};
+        glm::vec2 size{1.0f};
+        glm::vec4 uv{0.0f, 0.0f, 1.0f, 1.0f};  // at the top-left corner (xy) and the bottom-right (zw)
+        glm::vec4 color{1.0f};                 // sRGB
+        int sortOrder = 0;
+        bool lit = false;
+        bool receiveShadows = true;
+        std::uint32_t entityId = PickBuffer::NoId;
+    };
+
     struct ShadowSettings
     {
         bool enabled = true;
@@ -123,6 +138,8 @@ private:
     Shader m_tonemapShader;
     Shader m_depthShader;
     Shader m_skinShader;
+    Shader m_spriteShader;
+    Shader m_spritePickShader;
     RenderTarget m_windowTarget;  // HDR scene for render(target = nullptr)
     ShadowMap m_shadowMap;
     LightClusters m_clusters;
@@ -194,6 +211,29 @@ private:
     std::vector<MeshRange> m_previewSkinnedRanges;
     std::vector<DrawData> m_previewSkinnedDraws;
     std::vector<LightData> m_previewLights;
+
+    struct SpriteVertex
+    {
+        glm::vec3 pos;
+        glm::vec3 normal;
+        glm::vec2 uv;
+        glm::vec4 color;
+        std::uint32_t flags;  // 1 = lit, 2 = receives shadows
+        std::uint32_t entity;
+    };
+    struct SpriteBatch
+    {
+        TextureId texture;
+        GLint first;
+        GLsizei count;
+    };
+    std::vector<SpriteDraw> m_sprites;
+    std::vector<SpriteDraw> m_previewSprites;
+    std::vector<SpriteVertex> m_spriteVertices;
+    std::vector<SpriteBatch> m_spriteBatches;
+    std::vector<std::uint32_t> m_spriteOrder;
+    GLuint m_spriteVao = 0;
+    GLuint m_spriteVbo = 0;
     bool m_mipsDirty = true;
 
     GLint m_viewProjLocation = -1;
@@ -231,6 +271,11 @@ private:
     void renderShadowMap(const ViewMatrices& view);
     void prepare();
     void drawScene(bool highlightedOnly) const;
+    // sortDepth: back to front by it (view-space depth = dot(xyz, pos) + w) within each sortOrder
+    void buildSprites(const glm::vec4* sortDepth);
+    void drawSprites() const;
+    void setLightingUniforms(const Shader& shader, const glm::mat4& viewProj, const glm::vec4& eye,
+                             const glm::vec4& viewDepth, int width, int height, bool shadows) const;
     Skin* skinSlot(SkinId id);
     void releaseSkin(std::uint32_t index);
 
@@ -257,7 +302,9 @@ public:
     // material overrides every submesh's own material; InvalidMaterial keeps them
     void addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId = PickBuffer::NoId,
                      bool highlight = false, MaterialId material = InvalidMaterial);
-    void clearInstances();
+    void clearInstances();  // and sprites
+    // Drawn after the lit pass, blended, depth-tested without writing depth; picked by renderIds
+    void addSprite(const SpriteDraw& sprite) { m_sprites.push_back(sprite); }
 
     // Skinned instances. acquireSkin keeps id if it is a live skin of model, else makes a new
     // one in bind pose; true if it made one. A skin nobody acquired since the last

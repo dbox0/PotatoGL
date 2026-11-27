@@ -109,6 +109,24 @@ void registerSceneComponents(ComponentRegistry& components)
             })
         .joint();
 
+    components.add<SpriteRenderer>("SpriteRenderer")
+        .property(
+            "sprite", "Sprite", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const SpriteRenderer*>(c)->sprite; },
+            [](void* c, const FieldValue& v) {
+                auto* sprite = static_cast<SpriteRenderer*>(c);
+                sprite->sprite = std::get<std::string>(v);
+                sprite->texture = InvalidTexture;
+            })
+        .asset(AssetKind::Texture)
+        .field<&SpriteRenderer::color>("color", 0.01f).color()
+        .field<&SpriteRenderer::size>("size", 0.01f)
+        .field<&SpriteRenderer::flipX>("flipX", "Flip X")
+        .field<&SpriteRenderer::flipY>("flipY", "Flip Y")
+        .field<&SpriteRenderer::sortOrder>("sortOrder")
+        .field<&SpriteRenderer::lit>("lit")
+        .field<&SpriteRenderer::receiveShadows>("receiveShadows");
+
     components.add<CameraComponent>("Camera")
         .field<&CameraComponent::fovDeg>("fovDeg", "FOV", 0.5f)
         .field<&CameraComponent::nearPlane>("nearPlane", "Near", 0.01f)

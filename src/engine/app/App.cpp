@@ -4,6 +4,7 @@
 #include "engine/core/EventBus.h"
 #include "engine/core/Input.h"
 #include "engine/scene/ComponentReflection.h"
+#include "engine/ui/UiComponents.h"
 #include "engine/ui/UiLayout.h"
 #include "engine/ui/UiReflection.h"
 
@@ -30,6 +31,7 @@ App::~App()
     m_game.reset();
     if (m_overlay)
         m_overlay->shutdown();  // GL objects must die before the context
+    m_assets.releaseTextures();
     m_ui.reset();
     m_renderer.reset();
     if (m_context)
@@ -143,6 +145,33 @@ void App::syncRenderInstances(Scene& scene)
         }
         m_renderer->addInstance(mesh.model, world.matrix, entt::to_integral(entity), highlight, mesh.materialId);
     }
+    for (auto [entity, world, sprite] : registry.view<WorldTransform, SpriteRenderer>().each()) {
+        if (sprite.texture == InvalidTexture) {
+            if (sprite.sprite.empty())
+                continue;
+            sprite.texture = m_assets.texture2D(sprite.sprite);
+            if (sprite.texture == InvalidTexture)
+                continue;
+        }
+        const AssetCache::SpriteInfo* info = m_assets.spriteInfo(sprite.texture);
+        if (!info)
+            continue;
+        Renderer::SpriteDraw draw;
+        draw.texture = sprite.texture;
+        draw.world = world.matrix;
+        draw.size = sprite.size.x > 0.0f && sprite.size.y > 0.0f
+                        ? sprite.size
+                        : glm::vec2(static_cast<float>(info->width), static_cast<float>(info->height)) /
+                              info->meta.pixelsPerUnit;
+        draw.uv = glm::vec4(sprite.flipX ? 1.0f : 0.0f, sprite.flipY ? 1.0f : 0.0f, sprite.flipX ? 0.0f : 1.0f,
+                            sprite.flipY ? 0.0f : 1.0f);
+        draw.color = sprite.color;
+        draw.sortOrder = sprite.sortOrder;
+        draw.lit = sprite.lit;
+        draw.receiveShadows = sprite.receiveShadows;
+        draw.entityId = entt::to_integral(entity);
+        m_renderer->addSprite(draw);
+    }
     // updateAnimators resolved their models and skins; a model without a skin draws as a static one
     for (auto [entity, world, skinned] : registry.view<WorldTransform, SkinnedMeshRenderer>().each()) {
         if (skinned.model == InvalidModel)
@@ -177,6 +206,19 @@ void App::updateAnimators(Scene& scene, float dt)
         tick = AnimationTick::Hold;
     GpuScope scope(m_renderer->profiler(), "Animation");
     updateAnimation(scene, m_assets, *m_renderer, dt, tick);
+}
+
+// Sprites and their sizes and borders, which follow hot reloads of the image and its .meta
+void App::resolveUiImages(Scene& scene)
+{
+    scene.registry().view<UIImage>().each([&](UIImage& image) {
+        if (image.texture == InvalidTexture && !image.sprite.empty())
+            image.texture = m_assets.texture2D(image.sprite);
+        const AssetCache::SpriteInfo* info = m_assets.spriteInfo(image.texture);
+        image.textureSize = info ? glm::vec2(static_cast<float>(info->width), static_cast<float>(info->height))
+                                 : glm::vec2(0.0f);
+        image.border = info ? info->meta.border : glm::vec4(0.0f);
+    });
 }
 
 // Lights point down their local -Z, like cameras
@@ -291,8 +333,10 @@ void App::run()
         updateInput();
         m_controller.update(dt, m_camera);
         m_renderer->pollShaderChanges();
-        if (m_renderer->shaderAutoReload())
+        if (m_renderer->shaderAutoReload()) {
             m_ui->pollShaderChanges();
+            m_assets.pollTextureChanges();
+        }
 
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
@@ -301,6 +345,7 @@ void App::run()
         Scene& scene = activeScene();
         updateAnimators(scene, dt);
         scene.updateWorldTransforms();
+        resolveUiImages(m_scene);
         {
             GpuScope scope(profiler, "Sync instances");
             syncRenderInstances(scene);

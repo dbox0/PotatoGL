@@ -1,8 +1,11 @@
 #pragma once
 
 #include "engine/assets/Material.h"
+#include "engine/assets/SpriteMeta.h"
 #include "engine/render/Renderer.h"
 
+#include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -12,7 +15,23 @@
 // so a bad path costs one attempt, not one per frame. Paths are resource-relative.
 class AssetCache
 {
+public:
+    struct SpriteInfo
+    {
+        int width = 0;
+        int height = 0;
+        SpriteMeta meta;
+    };
+
 private:
+    struct Texture2D
+    {
+        TextureId id = InvalidTexture;  // InvalidTexture: failed to load
+        std::filesystem::file_time_type imageTime;
+        std::filesystem::file_time_type metaTime;
+        SpriteInfo info;
+    };
+
     struct MaterialEntry
     {
         MaterialId id = InvalidMaterial;
@@ -32,6 +51,11 @@ private:
     std::uint64_t m_clipVersion = 1;
     std::unordered_map<std::string, GLuint> m_textures;
     std::unordered_map<std::string, MaterialEntry> m_materials;
+    std::unordered_map<std::string, Texture2D> m_textures2D;
+    std::unordered_map<TextureId, const SpriteInfo*> m_spriteInfo;  // into m_textures2D's nodes, which don't move
+    std::chrono::steady_clock::time_point m_lastTexturePoll;
+
+    bool loadTexture2D(const std::string& path, Texture2D& entry);
 
     Material toRenderer(const MaterialAsset& asset);
 
@@ -54,6 +78,17 @@ public:
 
     // Texture array layer; 0 (white) if it can't be loaded
     GLuint texture(const std::string& path);
+    // A standalone GL_TEXTURE_2D: sRGB8_ALPHA8, mipmapped, clamped, filtered per its .meta.
+    // InvalidTexture if it can't be loaded. Reloaded in place when the image or .meta changes.
+    TextureId texture2D(const std::string& path);
+    const SpriteInfo* spriteInfo(TextureId id) const;
+    // Loads the texture first; the defaults if it can't be loaded
+    SpriteMeta spriteMeta(const std::string& path);
+    // Applies right away; save also writes the .meta
+    void setSpriteMeta(const std::string& path, const SpriteMeta& meta, bool save);
+    void pollTextureChanges();  // cheap to call every frame, checks file times twice a second
+    void releaseTextures();     // before the GL context is destroyed
+
     // A .mat file; InvalidMaterial if it can't be loaded
     MaterialId material(const std::string& path);
 

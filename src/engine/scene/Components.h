@@ -3,6 +3,7 @@
 #include "engine/anim/Clip.h"
 #include "engine/anim/Pose.h"
 #include "engine/anim/Skeleton.h"
+#include "engine/assets/AssetTypes.h"
 #include "engine/render/Renderer.h"
 
 #include <entt/entity/entity.hpp>
@@ -27,6 +28,22 @@ struct MeshRenderer
     ModelId model = InvalidModel;  // runtime handle, reset whenever mesh changes
     std::string material;          // .mat path; empty = the model's own materials
     MaterialId materialId = InvalidMaterial;  // runtime handle, reset whenever material changes
+};
+
+// A textured quad in the local XY plane, centred on the object, facing +Z. Never casts shadows.
+// Unlit (the default): color * texture goes to the HDR target as-is, so exposure and the
+// tonemap curve apply to it like to everything else.
+struct SpriteRenderer
+{
+    std::string sprite;
+    glm::vec4 color{1.0f};       // sRGB
+    glm::vec2 size{0.0f};        // world units; 0 = the texture size / pixelsPerUnit
+    bool flipX = false;
+    bool flipY = false;
+    int sortOrder = 0;           // lower draws first; then back to front
+    bool lit = false;            // diffuse lighting from the sun, lights and ambient
+    bool receiveShadows = true;  // only when lit
+    TextureId texture = InvalidTexture;  // runtime, reset whenever sprite changes
 };
 
 // On the root of a prefab instance: the .prefab it's rebuilt from when that changes

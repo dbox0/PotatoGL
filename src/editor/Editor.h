@@ -2,6 +2,7 @@
 
 #include "engine/app/Overlay.h"
 #include "editor/AnimationViewer.h"
+#include "editor/CanvasPanel.h"
 #include "editor/ConsolePanel.h"
 #include "editor/DebugPanel.h"
 #include "editor/EditHistory.h"
@@ -39,6 +40,7 @@ private:
     ProjectPanel m_projectPanel;
     SceneViewPanel m_sceneView;
     ViewportPanel m_gameView{"Game"};
+    CanvasPanel m_canvasPanel;
     ThumbnailCache m_thumbnails;
     AnimationViewer m_viewer;  // while open it replaces the scene UI
     SceneDialogs m_dialogs;

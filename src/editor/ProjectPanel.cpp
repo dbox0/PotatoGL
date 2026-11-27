@@ -172,7 +172,7 @@ void ProjectPanel::scan()
 
     const auto add = [&](const fs::directory_entry& entry) {
         const std::string name = entry.path().filename().string();
-        if (name.starts_with('.'))
+        if (name.starts_with('.') || name.ends_with(".meta"))  // sidecars move with their asset
             return;
         const bool folder = entry.is_directory(ec);
         if (!query.empty() && lower(name).find(query) == std::string::npos)

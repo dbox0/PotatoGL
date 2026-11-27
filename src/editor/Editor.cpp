@@ -108,6 +108,7 @@ void Editor::shutdown()
     m_viewer.release();
     m_sceneView.release();
     m_gameView.release();
+    m_canvasPanel.release();
     m_thumbnails.release();
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
@@ -207,6 +208,7 @@ void Editor::update(const OverlayContext& context)
     m_gameView.draw(m_inPrefab ? "Editing a prefab: close it to see the game"
                     : context.scene.gameCamera() == entt::null ? "No camera in the scene"
                                                                : nullptr);
+    m_canvasPanel.draw(context, m_history, m_selection);
     m_dialogs.draw();
 
     if (m_sceneView.takeSaveRequest())
@@ -305,6 +307,7 @@ void Editor::renderViews(const OverlayContext& context)
         context.ui.drawCanvases(context.scene);
         context.ui.end(&target, target.width(), target.height());
     }
+    m_canvasPanel.render(context);  // last: the UIRects stay laid out for its preview
     m_thumbnails.process(context.renderer, context.assets, 4);
 }
 
@@ -339,6 +342,7 @@ void Editor::drawDockSpace()
         const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.2f, nullptr, &center);
         ImGui::DockBuilderDockWindow(m_gameView.name(), center);
         ImGui::DockBuilderDockWindow(m_sceneView.name(), center);
+        ImGui::DockBuilderDockWindow(CanvasPanel::WindowName, center);
         ImGui::DockBuilderDockWindow("Scene Hierarchy", right);
         ImGui::DockBuilderDockWindow("Inspector", rightBottom);
         ImGui::DockBuilderDockWindow(ProjectPanel::WindowName, bottom);

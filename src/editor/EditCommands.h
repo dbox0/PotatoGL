@@ -7,6 +7,7 @@
 #include <entt/entity/entity.hpp>
 
 #include <memory>
+#include <string>
 #include <vector>
 
 class Transform;
@@ -15,6 +16,10 @@ class Transform;
 std::unique_ptr<EditCommand> setFieldCommand(Scene& scene, entt::entity e, const ComponentInfo& info,
                                              const FieldInfo& field, const FieldValue& before,
                                              const FieldValue& after);
+// Already applied: every saved field that differs between two copies of info's component.
+// nullptr if none does.
+std::unique_ptr<EditCommand> componentEditCommand(EditContext& context, entt::entity e, const ComponentInfo& info,
+                                                  const void* before, const void* after, std::string name = {});
 // Already applied: a gizmo drag
 std::unique_ptr<EditCommand> transformCommand(EditContext& context, entt::entity e, const Transform& before,
                                               const Transform& after);

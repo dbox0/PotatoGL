@@ -5,7 +5,11 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
+#include <vector>
 
+// Sources may #include "file", resolved relative to the shaders/ folder (the folder of the
+// file being compiled's top-level source); hot reload watches included files too.
 class Shader
 {
 private:
@@ -14,6 +18,7 @@ private:
     std::string m_fragPath;
     std::filesystem::file_time_type m_vertTime;
     std::filesystem::file_time_type m_fragTime;
+    std::vector<std::pair<std::string, std::filesystem::file_time_type>> m_includes;  // every file included
     std::string m_lastError;
     bool m_compute = false;  // m_vertPath is then the compute shader
 

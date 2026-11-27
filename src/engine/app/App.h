@@ -47,6 +47,7 @@ private:
     void updateAnimators(Scene& scene, float dt);
     void syncRenderInstances(Scene& scene);
     void syncRenderLights(const Scene& scene);
+    void resolveUiImages(Scene& scene);
     void renderToWindow();
     void updateInput();
 

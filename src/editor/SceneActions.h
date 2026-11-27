@@ -27,6 +27,10 @@ enum class CreateKind
     PointLight,
     SpotLight,
     Camera,
+    UICanvas,
+    UIPanel,
+    UIShape,
+    UIImage,
 };
 
 // Object-level edits asked for by menus, shortcuts and the hierarchy. Requests made while
@@ -87,6 +91,7 @@ private:
 
     void applyCreate(EditContext& context, EditHistory& history, Selection& selection, const Request& request,
                      const glm::vec3& spawn);
+    void applyCreateUi(EditContext& context, EditHistory& history, Selection& selection, const Request& request);
     void applyDuplicate(EditContext& context, EditHistory& history, Selection& selection);
     void applyCopy(EditContext& context, const Selection& selection);
     void applyPaste(EditContext& context, EditHistory& history, Selection& selection);

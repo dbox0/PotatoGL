@@ -13,6 +13,10 @@ const uint ModeImage = 0u;
 const uint ModeShape = 1u;
 const uint ModeText = 2u;
 
+vec3 linearToSrgb(vec3 c) {
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
+}
+
 float roundedBox(vec2 p, vec2 halfSize, float radius) {
     vec2 q = abs(p) - halfSize + radius;
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
@@ -33,7 +37,8 @@ void main() {
         float w = max(fwidth(d), 1e-4);
         color = vec4(vColor.rgb, vColor.a * smoothstep(0.5 - w, 0.5 + w, d));
     } else {
-        color = texture(uTexture, vUv) * vColor;
+        vec4 texel = texture(uTexture, vUv);
+        color = vec4(linearToSrgb(texel.rgb), texel.a) * vColor;
     }
     FragColor = vec4(color.rgb * color.a, color.a);
 }

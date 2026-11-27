@@ -207,8 +207,114 @@ void AssetCache::setMaterialAsset(const std::string& path, const MaterialAsset& 
         m_renderer->setMaterial(entry.id, toRenderer(asset));
 }
 
+static std::filesystem::file_time_type fileTime(const std::string& file)
+{
+    std::error_code ec;
+    return std::filesystem::last_write_time(file, ec);
+}
+
+static void applyFilter(TextureId id, SpriteFilter filter)
+{
+    glBindTexture(GL_TEXTURE_2D, id);
+    const bool point = filter == SpriteFilter::Point;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, point ? GL_NEAREST_MIPMAP_NEAREST : GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, point ? GL_NEAREST : GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+bool AssetCache::loadTexture2D(const std::string& path, Texture2D& entry)
+{
+    const std::string file = resourcePath(path);
+    entry.imageTime = fileTime(file);
+    entry.metaTime = fileTime(spriteMetaPath(file));
+    const std::optional<ImageData> image = loadImage(file);
+    if (!image)
+        return false;
+    if (entry.id == InvalidTexture)
+        glGenTextures(1, &entry.id);
+    glBindTexture(GL_TEXTURE_2D, entry.id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8, image->width, image->height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 image->rgba.data());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    entry.info.width = image->width;
+    entry.info.height = image->height;
+    entry.info.meta = loadSpriteMeta(file);
+    applyFilter(entry.id, entry.info.meta.filter);
+    return true;
+}
+
+TextureId AssetCache::texture2D(const std::string& path)
+{
+    if (const auto it = m_textures2D.find(path); it != m_textures2D.end())
+        return it->second.id;
+    Texture2D& entry = m_textures2D[path];
+    if (loadTexture2D(path, entry))
+        m_spriteInfo[entry.id] = &entry.info;
+    return entry.id;
+}
+
+const AssetCache::SpriteInfo* AssetCache::spriteInfo(TextureId id) const
+{
+    const auto it = m_spriteInfo.find(id);
+    return it == m_spriteInfo.end() ? nullptr : it->second;
+}
+
+SpriteMeta AssetCache::spriteMeta(const std::string& path)
+{
+    const SpriteInfo* info = spriteInfo(texture2D(path));
+    return info ? info->meta : loadSpriteMeta(resourcePath(path));
+}
+
+void AssetCache::setSpriteMeta(const std::string& path, const SpriteMeta& meta, bool save)
+{
+    const std::string file = resourcePath(path);
+    if (save)
+        saveSpriteMeta(file, meta);
+    const auto it = m_textures2D.find(path);
+    if (it == m_textures2D.end() || it->second.id == InvalidTexture)
+        return;
+    it->second.info.meta = meta;
+    it->second.metaTime = fileTime(spriteMetaPath(file));
+    applyFilter(it->second.id, meta.filter);
+}
+
+void AssetCache::pollTextureChanges()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_lastTexturePoll < std::chrono::milliseconds(500))
+        return;
+    m_lastTexturePoll = now;
+    for (auto& [path, entry] : m_textures2D) {
+        const std::string file = resourcePath(path);
+        if (fileTime(file) == entry.imageTime && fileTime(spriteMetaPath(file)) == entry.metaTime)
+            continue;
+        const TextureId before = entry.id;
+        if (loadTexture2D(path, entry) && before == InvalidTexture)
+            m_spriteInfo[entry.id] = &entry.info;
+    }
+}
+
+void AssetCache::releaseTextures()
+{
+    for (auto& [path, entry] : m_textures2D)
+        glDeleteTextures(1, &entry.id);
+    m_textures2D.clear();
+    m_spriteInfo.clear();
+}
+
 void AssetCache::rename(const std::string& from, const std::string& to)
 {
+    renameKeys(m_textures2D, from, to);  // moves the values, so the info pointers follow
+    m_spriteInfo.clear();
+    for (const auto& [path, entry] : m_textures2D) {
+        if (entry.id != InvalidTexture)
+            m_spriteInfo[entry.id] = &entry.info;
+    }
     renameKeys(m_models, from, to);
     renameKeys(m_animations, from, to);
     renameKeys(m_animFiles, from, to);

@@ -45,6 +45,7 @@ private:
     std::optional<FieldValue> m_editStart;
     EditHistory* m_history = nullptr;  // valid during draw()
     AssetCache* m_assets = nullptr;    // valid during draw()
+    const ComponentRegistry* m_components = nullptr;  // valid during draw()
     // For the component being drawn: clips embedded in its model, joints of its skeleton
     std::vector<std::string> m_embeddedClips;
     std::vector<std::string> m_jointNames;
@@ -58,6 +59,7 @@ private:
 
     bool drawField(const FieldInfo& field, void* data);
     void drawComponent(const ComponentInfo& info, Scene& scene, entt::entity e);
+    void drawAnchorPresets(const ComponentInfo& info, Scene& scene, entt::entity e);
     void drawAddMenu(const char* button, bool scripts, const ComponentRegistry& components, Scene& scene,
                      entt::entity e);
     void drawAsset(const std::string& ref, AssetCache& assets, ThumbnailCache& thumbnails);

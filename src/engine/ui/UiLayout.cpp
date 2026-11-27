@@ -25,6 +25,16 @@ static bool underCanvas(const Scene& scene, entt::entity e)
     return false;
 }
 
+entt::entity uiCanvasOf(const Scene& scene, entt::entity e)
+{
+    entt::entity canvas = entt::null;
+    for (; e != entt::null && e != scene.root() && scene.registry().valid(e); e = scene.parentOf(e)) {
+        if (scene.registry().all_of<Canvas>(e))
+            canvas = e;
+    }
+    return canvas;
+}
+
 std::vector<entt::entity> uiCanvases(const Scene& scene)
 {
     const entt::registry& registry = scene.registry();
@@ -50,15 +60,22 @@ float canvasScale(const Canvas& canvas, glm::vec2 screen)
     return std::exp(w + (h - w) * std::clamp(canvas.matchWidthOrHeight, 0.0f, 1.0f));
 }
 
-// T(pivot) * R * S * T(-pivot). y points down, so a counter-clockwise angle is negative.
-static glm::mat3 aroundPivot(glm::vec2 pivot, float degrees, glm::vec2 scale)
+// y points down, so a counter-clockwise angle is negative
+glm::mat2 uiPivotLinear(float degrees, glm::vec2 scale)
 {
     const float a = -glm::radians(degrees);
     const float c = std::cos(a), s = std::sin(a);
+    return glm::mat2(c * scale.x, s * scale.x, -s * scale.y, c * scale.y);
+}
+
+// T(pivot) * R * S * T(-pivot)
+static glm::mat3 aroundPivot(glm::vec2 pivot, float degrees, glm::vec2 scale)
+{
+    const glm::mat2 rs = uiPivotLinear(degrees, scale);
     glm::mat3 m(1.0f);
-    m[0] = glm::vec3(c * scale.x, s * scale.x, 0.0f);
-    m[1] = glm::vec3(-s * scale.y, c * scale.y, 0.0f);
-    m[2] = glm::vec3(pivot - glm::vec2(m[0]) * pivot.x - glm::vec2(m[1]) * pivot.y, 1.0f);
+    m[0] = glm::vec3(rs[0], 0.0f);
+    m[1] = glm::vec3(rs[1], 0.0f);
+    m[2] = glm::vec3(pivot - rs * pivot, 1.0f);
     return m;
 }
 

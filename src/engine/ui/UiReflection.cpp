@@ -20,6 +20,24 @@ void registerUiComponents(ComponentRegistry& components)
         .field<&RectTransform::rotationDeg>("rotationDeg", "Rotation", 0.5f)
         .field<&RectTransform::scale>("scale", 0.01f);
 
+    components.add<UIImage>("UIImage")
+        .label("UI Image")
+        .property(
+            "sprite", "Sprite", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const UIImage*>(c)->sprite; },
+            [](void* c, const FieldValue& v) {
+                auto* image = static_cast<UIImage*>(c);
+                image->sprite = std::get<std::string>(v);
+                image->texture = InvalidTexture;
+            })
+        .asset(AssetKind::Texture)
+        .field<&UIImage::color>("color", 0.01f).color()
+        .field<&UIImage::type>("type").options({"Simple", "Sliced", "Filled"})
+        .field<&UIImage::fillAmount>("fillAmount", 0.005f)
+        .field<&UIImage::fillMethod>("fillMethod").options({"Horizontal", "Vertical", "Radial360"})
+        .field<&UIImage::fillOrigin>("fillOrigin").options({"LeftOrBottom", "RightOrTop"})
+        .field<&UIImage::preserveAspect>("preserveAspect");
+
     components.add<UIShape>("UIShape")
         .label("UI Shape")
         .field<&UIShape::shape>("shape").options({"Rect", "RoundedRect", "Circle", "Line"})

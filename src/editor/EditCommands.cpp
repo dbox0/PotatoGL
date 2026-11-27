@@ -287,24 +287,32 @@ std::unique_ptr<EditCommand> setFieldCommand(Scene& scene, entt::entity e, const
     return std::make_unique<SetFieldCommand>(scene, e, info, field, before, after);
 }
 
+std::unique_ptr<EditCommand> componentEditCommand(EditContext& context, entt::entity e, const ComponentInfo& info,
+                                                  const void* before, const void* after, std::string name)
+{
+    std::vector<std::unique_ptr<EditCommand>> commands;
+    for (const FieldInfo& field : info.fields) {
+        if (!field.saved || !field.set)
+            continue;
+        const FieldValue from = field.get(before);
+        const FieldValue to = field.get(after);
+        if (from != to)
+            commands.push_back(setFieldCommand(context.scene, e, info, field, from, to));
+    }
+    if (commands.empty())
+        return nullptr;
+    if (name.empty())
+        name = "Edit " + info.name + " " + entityName(context.scene, e);
+    return groupCommand(std::move(name), std::move(commands));
+}
+
 std::unique_ptr<EditCommand> transformCommand(EditContext& context, entt::entity e, const Transform& before,
                                               const Transform& after)
 {
     const ComponentInfo* info = context.components.find("Transform");
     if (!info)
         return nullptr;
-    std::vector<std::unique_ptr<EditCommand>> commands;
-    for (const FieldInfo& field : info->fields) {
-        if (!field.saved || !field.set)
-            continue;
-        const FieldValue from = field.get(&before);
-        const FieldValue to = field.get(&after);
-        if (from != to)
-            commands.push_back(setFieldCommand(context.scene, e, *info, field, from, to));
-    }
-    if (commands.empty())
-        return nullptr;
-    return groupCommand("Transform " + entityName(context.scene, e), std::move(commands));
+    return componentEditCommand(context, e, *info, &before, &after, "Transform " + entityName(context.scene, e));
 }
 
 std::unique_ptr<EditCommand> addComponentCommand(Scene& scene, entt::entity e, const ComponentInfo& info)

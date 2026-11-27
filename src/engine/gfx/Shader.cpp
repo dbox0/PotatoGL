@@ -23,13 +23,54 @@ static std::filesystem::file_time_type modifiedTime(const std::string& path)
     return std::filesystem::last_write_time(path, ec);
 }
 
-static GLuint compileShader(GLenum type, const std::string& path, std::string& error)
+using Includes = std::vector<std::pair<std::string, std::filesystem::file_time_type>>;
+
+// Replaces #include "file" lines with the file, read from dir; #line keeps error line numbers
+static bool expandIncludes(std::string& source, const std::filesystem::path& dir, Includes& includes,
+                           std::string& error, int depth = 0)
 {
-    const std::optional<std::string> src = readFile(path);
+    std::string out;
+    std::istringstream in(source);
+    std::string line;
+    int number = 0;
+    while (std::getline(in, line)) {
+        ++number;
+        const std::size_t hash = line.find_first_not_of(" \t");
+        if (hash == std::string::npos || line.compare(hash, 8, "#include") != 0) {
+            out += line;
+            out += '\n';
+            continue;
+        }
+        const std::size_t open = line.find('"', hash);
+        const std::size_t close = open == std::string::npos ? open : line.find('"', open + 1);
+        if (close == std::string::npos || depth > 8) {
+            error = "Bad #include: " + line;
+            return false;
+        }
+        const std::string file = (dir / line.substr(open + 1, close - open - 1)).string();
+        std::optional<std::string> included = readFile(file);
+        if (!included) {
+            error = "Failed to open included " + file;
+            return false;
+        }
+        includes.emplace_back(file, modifiedTime(file));
+        if (!expandIncludes(*included, dir, includes, error, depth + 1))
+            return false;
+        out += "#line 1\n" + *included + "\n#line " + std::to_string(number + 1) + "\n";
+    }
+    source = std::move(out);
+    return true;
+}
+
+static GLuint compileShader(GLenum type, const std::string& path, std::string& error, Includes& includes)
+{
+    std::optional<std::string> src = readFile(path);
     if (!src) {
         error = "Failed to open " + path;
         return 0;
     }
+    if (!expandIncludes(*src, std::filesystem::path(path).parent_path(), includes, error))
+        return 0;
 
     const char* cstr = src->c_str();
     GLuint shader = glCreateShader(type);
@@ -61,7 +102,9 @@ bool Shader::loadCompute(const std::string& path)
     m_vertTime = modifiedTime(path);
 
     std::string error;
-    const GLuint cs = compileShader(GL_COMPUTE_SHADER, path, error);
+    Includes includes;
+    const GLuint cs = compileShader(GL_COMPUTE_SHADER, path, error, includes);
+    m_includes = std::move(includes);
     if (!cs) {
         m_lastError = error;
         std::fprintf(stderr, "%s\n", error.c_str());
@@ -97,8 +140,10 @@ bool Shader::load(const std::string& vertPath, const std::string& fragPath)
     m_fragTime = modifiedTime(fragPath);
 
     std::string error;
-    GLuint vs = compileShader(GL_VERTEX_SHADER, vertPath, error);
-    GLuint fs = vs ? compileShader(GL_FRAGMENT_SHADER, fragPath, error) : 0;
+    Includes includes;
+    GLuint vs = compileShader(GL_VERTEX_SHADER, vertPath, error, includes);
+    GLuint fs = vs ? compileShader(GL_FRAGMENT_SHADER, fragPath, error, includes) : 0;
+    m_includes = std::move(includes);
     if (!vs || !fs) {
         glDeleteShader(vs);
         m_lastError = error;
@@ -141,7 +186,10 @@ bool Shader::reloadIfChanged()
 {
     if (m_vertPath.empty())
         return false;
-    if (modifiedTime(m_vertPath) == m_vertTime && (m_compute || modifiedTime(m_fragPath) == m_fragTime))
+    bool changed = modifiedTime(m_vertPath) != m_vertTime || (!m_compute && modifiedTime(m_fragPath) != m_fragTime);
+    for (const auto& [file, time] : m_includes)
+        changed = changed || modifiedTime(file) != time;
+    if (!changed)
         return false;
     return reload();
 }

@@ -13,6 +13,7 @@
 
 class RenderTarget;
 class Scene;
+struct UIImage;
 struct UIRect;
 struct UIShape;
 
@@ -24,7 +25,7 @@ class UIRenderer
 public:
     enum Mode : std::uint32_t
     {
-        Image = 0,
+        Image = 0,  // the texture is sRGB-decoded on sampling, so its rgb is encoded back
         Shape = 1,  // rounded box SDF; uv = offset from the centre, params = half size, radius, border
         Text = 2,
     };
@@ -67,6 +68,10 @@ private:
     UIRenderer() = default;
     void drawElement(const Scene& scene, entt::entity e);
     void drawShape(const UIShape& shape, const UIRect& rect);
+    void drawImage(const UIImage& image, const UIRect& rect);
+    // Quad from local min to max with uvs from uvMin to uvMax
+    void imageQuad(GLuint texture, const UIRect& rect, glm::vec2 min, glm::vec2 max, glm::vec2 uvMin, glm::vec2 uvMax,
+                   std::uint32_t color);
 
 public:
     // nullptr if the shader fails to load
