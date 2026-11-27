@@ -88,4 +88,11 @@ void registerSceneComponents(ComponentRegistry& components)
         .field<&SpotLight::outerDeg>("outerDeg", "Outer Angle", 0.5f);
 
     components.add<Disabled>("Disabled");
+
+    // Removing it unpacks the instance: a plain copy from then on
+    components.add<PrefabInstance>("PrefabInstance")
+        .label("Prefab Instance")
+        .field<&PrefabInstance::prefab>("prefab", "Prefab")
+        .asset(AssetKind::Prefab)
+        .addable = false;
 }

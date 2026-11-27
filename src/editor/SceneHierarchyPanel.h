@@ -11,7 +11,8 @@ class SceneActions;
 class Selection;
 
 // Click selects, Ctrl+click adds or removes, Shift+click selects a range. Dragging a
-// selected object moves the whole selection.
+// selected object moves the whole selection. Rows have an icon for what the object is;
+// prefab instances are drawn in blue.
 class SceneHierarchyPanel
 {
 private:
@@ -30,7 +31,8 @@ private:
     entt::entity m_reparentChild = entt::null;
     entt::entity m_reparentTarget = entt::null;
 
-    void drawNode(Scene& scene, entt::entity e);
+    // inPrefab: e is inside a prefab instance
+    void drawNode(Scene& scene, entt::entity e, bool inPrefab);
     void click(entt::entity e);
     void applyPendingEdits(Scene& scene, const ComponentRegistry& components, EditHistory& history);
 

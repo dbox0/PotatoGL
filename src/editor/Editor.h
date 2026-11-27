@@ -14,9 +14,12 @@
 #include "editor/ThumbnailCache.h"
 #include "editor/ViewportPanel.h"
 
+#include "engine/scene/Transform.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Dear ImGui docking editor; F1 hides it and shows the game camera fullscreen.
@@ -35,8 +38,9 @@ private:
     ViewportPanel m_gameView{"Game"};
     ThumbnailCache m_thumbnails;
     SceneDialogs m_dialogs;
-    bool m_selectSceneTab = false;
+    bool m_selectSceneTab = true;  // the Scene view is the tab shown at startup
     bool m_resetLayout = false;
+    bool m_layoutChecked = false;
 
     Selection m_selection;
     std::vector<entt::entity> m_tagged;  // carry the Selected tag
@@ -58,16 +62,35 @@ private:
     std::uint64_t m_savedState = 0;
     bool m_forceDirty = false;  // changed outside the history (e.g. its file was deleted)
 
+    // Prefab mode: the open prefab is loaded into the scene, whose path is the prefab's file,
+    // and the scene waits here until the prefab is closed
+    struct ParkedScene
+    {
+        std::string snapshot;
+        std::string path;
+        EditHistory history;
+        std::uint64_t savedState = 0;
+        bool forceDirty = false;
+        SelectionIds selection;
+        Transform camera;
+        std::vector<std::pair<std::string, std::string>> moves;  // asset moves to apply on return
+        std::vector<std::string> savedPrefabs;  // refs; their instances are rebuilt on return
+    };
+    bool m_inPrefab = false;
+    ParkedScene m_parked;
+
     // What waits for the unsaved changes prompt (and maybe Save As) to be answered
     enum class Pending
     {
         None,
         NewScene,
         OpenScene,
+        OpenPrefab,
+        ClosePrefab,
         Quit,
     };
     Pending m_pending = Pending::None;
-    std::string m_pendingScene;  // ref, for OpenScene
+    std::string m_pendingScene;  // ref, for OpenScene and OpenPrefab
     bool m_pendingAfterSaveAs = false;
     bool m_quitAsked = false;
     bool m_quitNow = false;
@@ -107,6 +130,12 @@ private:
     void openScene(const OverlayContext& context, const std::string& path);
     // Empty path: asks for one with Save As. True if it was written.
     bool saveScene(const OverlayContext& context, const std::string& path);
+
+    void openPrefab(const OverlayContext& context, const std::string& ref);
+    void closePrefab(const OverlayContext& context);
+    bool savePrefab(const OverlayContext& context);
+    // The open prefab's root object; entt::null outside prefab mode
+    entt::entity prefabRoot(const Scene& scene) const;
 
     void handleProjectEvents(const OverlayContext& context);
     void handleInspectorRequests(const OverlayContext& context);

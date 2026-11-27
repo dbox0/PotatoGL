@@ -98,6 +98,7 @@ void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, S
         drawList->PopClipRect();
 
         drawToolbar();
+        drawPrefabBar();
         drawGizmo(context, history, selection);
         handleHotkeys(context);
 
@@ -138,6 +139,36 @@ void SceneViewPanel::drawToolbar()
     }
     if (ImGui::SmallButton(m_local ? "X Local" : "X Global"))
         m_local = !m_local;
+}
+
+void SceneViewPanel::setPrefab(const std::string& name, bool dirty)
+{
+    if (name != m_prefab)
+        m_view.setTitle(name.empty() ? std::string("Scene") : "Prefab: " + name);
+    m_prefab = name;
+    m_prefabDirty = dirty;
+}
+
+// Top right of the image: "< Back  Prefab: Name*  Save"
+void SceneViewPanel::drawPrefabBar()
+{
+    if (m_prefab.empty())
+        return;
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const std::string label = "Prefab: " + m_prefab + (m_prefabDirty ? "*" : "");
+    const float width = ImGui::CalcTextSize("< Back").x + ImGui::CalcTextSize(label.c_str()).x +
+                        ImGui::CalcTextSize("Save").x + style.FramePadding.x * 4.0f + style.ItemSpacing.x * 2.0f;
+    ImGui::SetCursorScreenPos(ImVec2(m_view.imageX() + m_view.imageWidth() - width - 8.0f, m_view.imageY() + 8.0f));
+    if (ImGui::SmallButton("< Back"))
+        m_backRequested = true;
+    ImGui::SetItemTooltip("Close the prefab and return to the scene");
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.45f, 0.7f, 1.0f, 1.0f), "%s", label.c_str());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_prefabDirty);
+    if (ImGui::SmallButton("Save"))
+        m_saveRequested = true;
+    ImGui::EndDisabled();
 }
 
 void SceneViewPanel::handleHotkeys(const OverlayContext& context)

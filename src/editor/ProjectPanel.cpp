@@ -363,9 +363,11 @@ void ProjectPanel::activate(const Item& item)
     case AssetKind::Scene:
         m_events.openScene = item.ref;
         break;
+    case AssetKind::Prefab:
+        m_events.openPrefab = item.ref;
+        break;
     case AssetKind::Material:
     case AssetKind::Model:
-    case AssetKind::Prefab:
         break;  // the inspector shows them
     default:
         openExternally(item.file);
@@ -658,6 +660,8 @@ void ProjectPanel::drawItemMenu(const Item& item)
         break;
     case AssetKind::Model:
     case AssetKind::Prefab:
+        if (item.kind == AssetKind::Prefab && ImGui::MenuItem("Open Prefab"))
+            m_events.openPrefab = item.ref;
         if (ImGui::MenuItem("Add to Scene"))
             m_events.instantiate = item.ref;
         break;

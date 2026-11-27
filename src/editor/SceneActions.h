@@ -77,6 +77,11 @@ private:
 
     std::vector<Request> m_requests;
     std::vector<Copied> m_clipboard;
+    entt::entity m_topParent = entt::null;
+    std::string m_openPrefab;  // can't be instantiated inside itself
+
+    // requested if valid, else where top-level objects go
+    entt::entity parentFor(const EditContext& context, entt::entity requested) const;
 
     void applyCreate(EditContext& context, EditHistory& history, Selection& selection, const Request& request,
                      const glm::vec3& spawn);
@@ -112,6 +117,15 @@ public:
     // ImGui menu items: one per CreateKind, and Duplicate / Copy / Paste / Delete
     void drawCreateItems(entt::entity parent = entt::null);
     void drawEditItems(bool hasSelection);
+
+    // Objects asked for at the top level go under it instead (the open prefab's root);
+    // entt::null: the top level
+    // openPrefab: the prefab being edited, refused as an instance inside itself
+    void setPrefabMode(entt::entity topParent, std::string openPrefab)
+    {
+        m_topParent = topParent;
+        m_openPrefab = std::move(openPrefab);
+    }
 
     // spawn: world position for new top-level objects
     void apply(EditContext& context, EditHistory& history, Selection& selection, const glm::vec3& spawn);

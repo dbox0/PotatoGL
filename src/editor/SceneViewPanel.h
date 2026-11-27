@@ -10,6 +10,7 @@
 #include <entt/entity/entity.hpp>
 
 #include <string>
+#include <utility>
 #include <vector>
 
 class EditHistory;
@@ -20,6 +21,7 @@ struct OverlayContext;
 // Scene view: editor camera, click to select (Ctrl/Shift+click adds or removes), Unity-style
 // transform gizmo on the active object that moves the whole selection, selection outline,
 // light and camera gizmos. Q none, W move, E rotate, R scale, X local/global, hold Ctrl to snap.
+// While a prefab is open it is the Prefab view: the tab says so and a bar offers Save and Back.
 class SceneViewPanel
 {
 public:
@@ -32,13 +34,18 @@ public:
     };
 
 private:
-    ViewportPanel m_view{"Scene"};
+    ViewportPanel m_view{"Scene", "###SceneView"};
     PickBuffer m_pick;
     OutlineMask m_outline;
     Tool m_tool = Tool::Move;
     bool m_local = true;
 
     SceneGizmos m_gizmos;
+
+    std::string m_prefab;  // name of the open prefab; empty: the scene
+    bool m_prefabDirty = false;
+    bool m_saveRequested = false;
+    bool m_backRequested = false;
 
     bool m_pickRequested = false;
     bool m_pickAdditive = false;   // Ctrl or Shift was held: toggle instead of replace
@@ -62,6 +69,7 @@ private:
     glm::vec3 m_dragActiveScale{1.0f};
 
     void drawToolbar();
+    void drawPrefabBar();
     void acceptDrops(const OverlayContext& context, SceneActions& actions);
     // Where a ray through the screen point meets the ground (y = 0), or a point in front of the camera
     glm::vec3 dropPoint(const OverlayContext& context, float x, float y) const;
@@ -77,6 +85,11 @@ public:
     // After the scene is updated: color, ids on a click, then the selection outline
     void render(const OverlayContext& context, Selection& selection);
     void release();
+
+    // name: the open prefab, empty for the scene. Set before draw().
+    void setPrefab(const std::string& name, bool dirty);
+    bool takeSaveRequest() { return std::exchange(m_saveRequested, false); }
+    bool takeBackRequest() { return std::exchange(m_backRequested, false); }
 
     void focus()                        { m_view.focus(); }
     const char* name() const            { return m_view.name(); }

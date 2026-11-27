@@ -340,6 +340,8 @@ void InspectorPanel::drawAsset(const std::string& ref, AssetCache& assets, Thumb
     case AssetKind::Prefab:
         if (kind == AssetKind::Model)
             drawPreview(thumbnails, ref, kind, previewSize);
+        if (kind == AssetKind::Prefab && ImGui::Button("Open Prefab", ImVec2(-1.0f, 0.0f)))
+            m_requests.openPrefab = ref;
         if (ImGui::Button("Add to Scene", ImVec2(-1.0f, 0.0f)))
             m_requests.instantiate = ref;
         ImGui::TextDisabled("Or drag it into the Scene view or the Hierarchy");

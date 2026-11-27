@@ -8,6 +8,7 @@
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
+#include "engine/scene/Prefab.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
@@ -69,6 +70,7 @@ bool Gameplay::init(const GameContext& context)
         buildDefaultScene(scene);
         scene.setPath(path);
     }
+    refreshPrefabInstances(scene, context.components);
 
     context.camera.getTransform().setPos({0.0f, 12.0f, 22.0f});
     context.camera.getTransform().lookAt({0.0f, 0.0f, 0.0f});

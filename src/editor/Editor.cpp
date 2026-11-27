@@ -8,6 +8,7 @@
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Camera.h"
+#include "engine/scene/Prefab.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
@@ -18,10 +19,43 @@
 #include <imgui_internal.h>
 #include <ImGuizmo.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+// Asset fields of the loaded objects that point into from, moved to to
+static void rebaseReferences(Scene& scene, const ComponentRegistry& components, const std::string& from,
+                             const std::string& to)
+{
+    entt::registry& registry = scene.registry();
+    for (const auto& info : components.all()) {
+        for (const FieldInfo& field : info->fields) {
+            if (field.type != FieldType::String || field.asset == AssetKind::None || !field.set)
+                continue;
+            for (const entt::entity e : registry.view<Uuid>()) {
+                if (!info->has(registry, e))
+                    continue;
+                void* data = info->get(registry, e);
+                const std::string value = std::get<std::string>(field.get(data));
+                if (pathIsUnder(value, from))
+                    field.set(data, rebasePath(value, from, to));
+            }
+        }
+    }
+}
+
+// A file path (not a ref) that follows a move of the asset or folder from
+static void rebaseFilePath(std::string& path, const std::string& from, const std::string& to)
+{
+    if (path.empty() || !assetops::isInsideRoot(path))
+        return;
+    const std::string ref = assetops::toRef(path);
+    if (pathIsUnder(ref, from))
+        path = assetops::fromRef(rebasePath(ref, from, to)).string();
+}
 
 void populateDefaultScene(Scene& scene)
 {
@@ -138,15 +172,24 @@ void Editor::update(const OverlayContext& context)
         m_sceneView.focus();
         m_selectSceneTab = false;
     }
+    m_sceneView.setPrefab(m_inPrefab ? sceneName(context) : std::string(), m_inPrefab && sceneDirty(context));
     m_sceneView.draw(context, m_history, m_selection, m_actions, m_gameView.aspect());
-    m_gameView.draw(context.scene.gameCamera() == entt::null ? "No camera in the scene" : nullptr);
+    m_gameView.draw(m_inPrefab ? "Editing a prefab: close it to see the game"
+                    : context.scene.gameCamera() == entt::null ? "No camera in the scene"
+                                                               : nullptr);
     m_dialogs.draw();
 
+    if (m_sceneView.takeSaveRequest())
+        saveScene(context, context.scene.path());
+    if (m_sceneView.takeBackRequest())
+        request(context, Pending::ClosePrefab);
     handleProjectEvents(context);
     handleInspectorRequests(context);
     if (!context.controller.isLooking())
         handleObjectShortcuts();
     EditContext edit{context.scene, context.components};
+    m_actions.setPrefabMode(prefabRoot(context.scene),
+                            m_inPrefab ? assetops::toRef(context.scene.path()) : std::string());
     m_actions.apply(edit, m_history, m_selection, spawnPoint(context));
     syncSelectedTag(context.scene.registry());
 }
@@ -204,6 +247,14 @@ void Editor::syncSelectedTag(entt::registry& registry)
 
 void Editor::renderViews(const OverlayContext& context)
 {
+    // A prefab without a sun of its own is lit by a default one, like a new scene's
+    auto suns = context.scene.registry().view<DirectionalLight>();
+    if (m_inPrefab && suns.begin() == suns.end()) {
+        Transform sun;
+        sun.setEulerAngles(glm::radians(glm::vec3(-50.0f, -30.0f, 0.0f)));
+        const DirectionalLight light;
+        context.renderer.setDirectionalLight(glm::vec3(sun.getMatrix()[2]), light.color, light.intensity);
+    }
     m_sceneView.render(context, m_selection);
     syncSelectedTag(context.scene.registry());
     if (m_gameView.visible()) {
@@ -225,6 +276,12 @@ void Editor::drawDockSpace()
 {
     const ImGuiID dockId = ImGui::GetID("EditorDock");
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    // Layouts saved before the Scene view's window was renamed don't place it
+    if (!m_layoutChecked) {
+        m_layoutChecked = true;
+        if (ImGui::DockBuilderGetNode(dockId) && !ImGui::FindWindowSettingsByID(ImHashStr(m_sceneView.name())))
+            m_resetLayout = true;
+    }
     if (m_resetLayout) {
         ImGui::DockBuilderRemoveNode(dockId);
         m_resetLayout = false;
@@ -237,8 +294,8 @@ void Editor::drawDockSpace()
         const ImGuiID rightBottom = ImGui::DockBuilderSplitNode(right, ImGuiDir_Down, 0.6f, nullptr, &right);
         const ImGuiID bottom = ImGui::DockBuilderSplitNode(center, ImGuiDir_Down, 0.32f, nullptr, &center);
         const ImGuiID left = ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.2f, nullptr, &center);
-        ImGui::DockBuilderDockWindow(m_sceneView.name(), center);
         ImGui::DockBuilderDockWindow(m_gameView.name(), center);
+        ImGui::DockBuilderDockWindow(m_sceneView.name(), center);
         ImGui::DockBuilderDockWindow("Scene Hierarchy", right);
         ImGui::DockBuilderDockWindow("Inspector", rightBottom);
         ImGui::DockBuilderDockWindow(ProjectPanel::WindowName, bottom);
@@ -259,7 +316,7 @@ void Editor::drawMenuBar(const OverlayContext& context)
             m_dialogs.openOpenScene();
         if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_S, ImGuiInputFlags_RouteGlobal))
             saveScene(context, context.scene.path());
-        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, ImGuiInputFlags_RouteGlobal))
+        if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_S, ImGuiInputFlags_RouteGlobal) && !m_inPrefab)
             m_dialogs.openSaveAs(context.scene.path());
     }
 
@@ -278,10 +335,12 @@ void Editor::drawMenuBar(const OverlayContext& context)
             request(context, Pending::NewScene);
         if (ImGui::MenuItem("Open Scene...", "Ctrl+O"))
             m_dialogs.openOpenScene();
-        if (ImGui::MenuItem("Save", "Ctrl+S"))
+        if (ImGui::MenuItem(m_inPrefab ? "Save Prefab" : "Save", "Ctrl+S"))
             saveScene(context, context.scene.path());
-        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
+        if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S", false, !m_inPrefab))
             m_dialogs.openSaveAs(context.scene.path());
+        if (m_inPrefab && ImGui::MenuItem("Close Prefab"))
+            request(context, Pending::ClosePrefab);
         ImGui::EndDisabled();
         if (!editing)
             ImGui::TextDisabled("Stop playing to save or load");
@@ -341,7 +400,7 @@ void Editor::drawMenuBar(const OverlayContext& context)
     const char* modeText = context.playMode == PlayMode::Edit   ? "Edit"
                            : context.playMode == PlayMode::Play ? "Playing"
                                                                 : "Paused";
-    std::string text = sceneName(context) + (sceneDirty(context) ? "*" : "") + "  |  " + modeText;
+    std::string text = (m_inPrefab ? "Prefab: " : "") + sceneName(context) + (sceneDirty(context) ? "*" : "") + "  |  " + modeText;
     if (!m_status.empty() && ImGui::GetTime() - m_statusTime < 5.0)
         text = m_status + "  |  " + text;
     ImGui::SetCursorPosX(ImGui::GetWindowWidth() - ImGui::CalcTextSize(text.c_str()).x -
@@ -361,7 +420,11 @@ void Editor::drawPlayButtons(const OverlayContext& context)
 
     if (playing)
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.8f, 1.0f));
+    ImGui::BeginDisabled(m_inPrefab);
     const bool toggled = ImGui::Button(playing ? "Stop" : "Play");
+    ImGui::EndDisabled();
+    if (m_inPrefab)
+        ImGui::SetItemTooltip("Close the prefab to play");
     if (playing)
         ImGui::PopStyleColor();
     if (toggled)
@@ -378,6 +441,8 @@ void Editor::drawPlayButtons(const OverlayContext& context)
 // Edits made while playing go to a separate history that Stop throws away.
 void Editor::setPlaying(const OverlayContext& context, bool playing)
 {
+    if (playing && m_inPrefab)
+        return;
     if (playing) {
         m_playSnapshot = ::saveScene(context.scene, context.components);
         m_playSelection = selectionUuids(context.scene);
@@ -475,13 +540,22 @@ std::string Editor::sceneName(const OverlayContext& context) const
 void Editor::request(const OverlayContext& context, Pending action, std::string sceneRef)
 {
     if (action != Pending::Quit && context.playMode != PlayMode::Edit) {
-        setStatus("Stop playing to change scenes");
+        setStatus("Stop playing to change scenes or open prefabs");
+        return;
+    }
+    if (action == Pending::ClosePrefab && !m_inPrefab)
+        return;
+    if (action == Pending::OpenPrefab && m_inPrefab &&
+        assetops::toRef(context.scene.path()) == sceneRef) {
+        m_sceneView.focus();
         return;
     }
     m_pending = action;
     m_pendingScene = std::move(sceneRef);
     m_pendingAfterSaveAs = false;
-    if (sceneDirty(context))
+    // Opening a prefab from the scene parks the scene, nothing is lost
+    const bool losesChanges = action != Pending::OpenPrefab || m_inPrefab;
+    if (losesChanges && sceneDirty(context))
         m_dialogs.openUnsaved(sceneName(context));
     else
         runPending(context);
@@ -490,13 +564,28 @@ void Editor::request(const OverlayContext& context, Pending action, std::string 
 void Editor::runPending(const OverlayContext& context)
 {
     const Pending action = std::exchange(m_pending, Pending::None);
+    std::string ref = std::exchange(m_pendingScene, {});
     m_pendingAfterSaveAs = false;
+    // The prefab's changes are settled; the scene's come next
+    if (m_inPrefab && (action == Pending::NewScene || action == Pending::OpenScene || action == Pending::Quit)) {
+        closePrefab(context);
+        request(context, action, std::move(ref));
+        return;
+    }
     switch (action) {
     case Pending::NewScene:
         newScene(context);
         break;
     case Pending::OpenScene:
-        openScene(context, assetops::fromRef(m_pendingScene).string());
+        openScene(context, assetops::fromRef(ref).string());
+        break;
+    case Pending::OpenPrefab:
+        if (m_inPrefab)
+            closePrefab(context);
+        openPrefab(context, ref);
+        break;
+    case Pending::ClosePrefab:
+        closePrefab(context);
         break;
     case Pending::Quit:
         m_quitNow = true;
@@ -504,7 +593,6 @@ void Editor::runPending(const OverlayContext& context)
     case Pending::None:
         break;
     }
-    m_pendingScene.clear();
 }
 
 void Editor::handleDialogs(const OverlayContext& context)
@@ -568,6 +656,11 @@ void Editor::openScene(const OverlayContext& context, const std::string& path)
         m_history.clear();
         markClean();
         setStatus("Opened " + fs::path(path).filename().string());
+        if (const int changed = refreshPrefabInstances(context.scene, context.components); changed > 0) {
+            m_forceDirty = true;
+            setStatus("Updated " + std::to_string(changed) + " prefab instance" + (changed == 1 ? "" : "s") +
+                      " in " + fs::path(path).filename().string());
+        }
     } else {
         setStatus("Open failed: " + error);
     }
@@ -575,6 +668,8 @@ void Editor::openScene(const OverlayContext& context, const std::string& path)
 
 bool Editor::saveScene(const OverlayContext& context, const std::string& path)
 {
+    if (m_inPrefab)
+        return savePrefab(context);
     if (path.empty()) {
         m_dialogs.openSaveAs("");
         return false;
@@ -590,6 +685,124 @@ bool Editor::saveScene(const OverlayContext& context, const std::string& path)
     return true;
 }
 
+entt::entity Editor::prefabRoot(const Scene& scene) const
+{
+    return m_inPrefab ? scene.registry().get<Relationship>(scene.root()).firstChild : entt::null;
+}
+
+// The scene is parked like Play parks it; the prefab's tree keeps its uuids, so saving
+// writes back the same objects
+void Editor::openPrefab(const OverlayContext& context, const std::string& ref)
+{
+    if (context.playMode != PlayMode::Edit) {
+        setStatus("Stop playing to open prefabs");
+        return;
+    }
+    const fs::path file = assetops::fromRef(ref);
+    const auto text = assetops::readText(file);
+    {
+        Scene probe;
+        if (!text || loadEntityTree(probe, context.components, *text) == entt::null) {
+            setStatus("Can't open prefab " + assetops::displayPath(ref));
+            return;
+        }
+    }
+
+    Scene& scene = context.scene;
+    m_parked.snapshot = ::saveScene(scene, context.components);
+    m_parked.path = scene.path();
+    m_parked.history = std::move(m_history);
+    m_history.clear();
+    m_parked.savedState = m_savedState;
+    m_parked.forceDirty = m_forceDirty;
+    m_parked.selection = selectionUuids(scene);
+    m_parked.camera = context.camera.getTransform();
+    m_parked.moves.clear();
+
+    scene.clear();
+    const entt::entity root = loadEntityTree(scene, context.components, *text);
+    scene.setPath(file.string());
+    m_inPrefab = true;
+    m_selection.clear();
+    m_lastSelection.clear();
+    markClean();
+    scene.registry().remove<PrefabInstance>(root);
+    m_forceDirty = refreshPrefabInstances(scene, context.components) > 0;  // nested prefabs that changed
+
+    // Frame the prefab: its root and how far its objects reach from it
+    scene.updateWorldTransforms();
+    const glm::vec3 center(scene.registry().get<WorldTransform>(root).matrix[3]);
+    float radius = 1.0f;
+    for (auto [e, world] : scene.registry().view<WorldTransform>().each())
+        radius = std::max(radius, glm::length(glm::vec3(world.matrix[3]) - center) + 1.0f);
+    Transform& camera = context.camera.getTransform();
+    camera.setPos(center + glm::normalize(glm::vec3(0.0f, 0.5f, 1.0f)) * (radius * 2.5f + 2.0f));
+    camera.lookAt(center);
+    context.controller.syncFrom(context.camera);
+
+    m_sceneView.focus();
+    setStatus("Opened prefab " + assetops::displayPath(ref));
+}
+
+// Back to the scene as it was parked; the prefab's unsaved changes are dropped
+void Editor::closePrefab(const OverlayContext& context)
+{
+    if (!m_inPrefab)
+        return;
+    Scene& scene = context.scene;
+    std::string error;
+    if (!loadScene(scene, context.components, m_parked.snapshot, &error))
+        setStatus("Restore failed: " + error);
+    scene.setPath(m_parked.path);
+    m_inPrefab = false;
+    for (const auto& [from, to] : m_parked.moves)
+        rebaseReferences(scene, context.components, from, to);
+    m_history = std::move(m_parked.history);
+    m_savedState = m_parked.savedState;
+    m_forceDirty = m_parked.forceDirty;
+    int changed = 0;
+    for (const std::string& ref : m_parked.savedPrefabs)
+        changed += refreshPrefabInstances(scene, context.components, ref);
+    if (changed > 0) {
+        m_forceDirty = true;
+        setStatus("Updated " + std::to_string(changed) + " prefab instance" + (changed == 1 ? "" : "s"));
+    }
+    setSelection(scene, m_parked.selection);
+    context.camera.getTransform() = m_parked.camera;
+    context.controller.syncFrom(context.camera);
+    m_parked = ParkedScene{};
+    m_sceneView.focus();
+}
+
+// A prefab is one tree: everything has to hang under a single root object
+bool Editor::savePrefab(const OverlayContext& context)
+{
+    Scene& scene = context.scene;
+    entt::entity root = entt::null;
+    int roots = 0;
+    scene.forEachChild(scene.root(), [&](entt::entity e) {
+        if (roots++ == 0)
+            root = e;
+    });
+    if (roots != 1) {
+        setStatus(roots == 0 ? "Can't save an empty prefab" : "A prefab has one root object: move the others under it");
+        return false;
+    }
+    std::string error;
+    if (!assetops::writeText(scene.path(), saveEntityTree(scene, context.components, root) + "\n", &error)) {
+        setStatus("Save failed: " + error);
+        return false;
+    }
+    markClean();
+    const std::string ref = assetops::toRef(scene.path());
+    if (std::find(m_parked.savedPrefabs.begin(), m_parked.savedPrefabs.end(), ref) == m_parked.savedPrefabs.end())
+        m_parked.savedPrefabs.push_back(ref);
+    m_thumbnails.invalidate(ref);
+    m_projectPanel.refresh();
+    setStatus("Saved " + assetops::displayPath(ref));
+    return true;
+}
+
 void Editor::handleProjectEvents(const OverlayContext& context)
 {
     ProjectPanel::Events events = m_projectPanel.takeEvents();
@@ -601,6 +814,8 @@ void Editor::handleProjectEvents(const OverlayContext& context)
         onAssetDeleted(context, ref);
     if (events.openScene)
         request(context, Pending::OpenScene, *events.openScene);
+    if (events.openPrefab)
+        request(context, Pending::OpenPrefab, *events.openPrefab);
     if (events.instantiate)
         m_actions.instantiate(*events.instantiate);
     if (events.createScene)
@@ -618,6 +833,8 @@ void Editor::handleInspectorRequests(const OverlayContext& context)
         m_projectPanel.ping(requests.ping);
     if (!requests.openScene.empty())
         request(context, Pending::OpenScene, requests.openScene);
+    if (!requests.openPrefab.empty())
+        request(context, Pending::OpenPrefab, requests.openPrefab);
     if (!requests.instantiate.empty())
         m_actions.instantiate(requests.instantiate);
 }
@@ -669,28 +886,15 @@ void Editor::onAssetMoved(const OverlayContext& context, const std::string& from
     context.assets.rename(from, to);
     m_thumbnails.invalidate(to);
 
-    entt::registry& registry = context.scene.registry();
-    for (const auto& info : context.components.all()) {
-        for (const FieldInfo& field : info->fields) {
-            if (field.type != FieldType::String || field.asset == AssetKind::None || !field.set)
-                continue;
-            for (const entt::entity e : registry.view<Uuid>()) {
-                if (!info->has(registry, e))
-                    continue;
-                void* data = info->get(registry, e);
-                const std::string value = std::get<std::string>(field.get(data));
-                if (pathIsUnder(value, from))
-                    field.set(data, rebasePath(value, from, to));
-            }
-        }
-    }
+    rebaseReferences(context.scene, context.components, from, to);
     const int files = assetops::rewriteReferences(from, to);
 
-    const std::string& scenePath = context.scene.path();
-    if (!scenePath.empty() && assetops::isInsideRoot(scenePath)) {
-        const std::string sceneRef = assetops::toRef(scenePath);
-        if (pathIsUnder(sceneRef, from))
-            context.scene.setPath(assetops::fromRef(rebasePath(sceneRef, from, to)).string());
+    std::string scenePath = context.scene.path();
+    rebaseFilePath(scenePath, from, to);
+    context.scene.setPath(std::move(scenePath));
+    if (m_inPrefab) {
+        m_parked.moves.emplace_back(from, to);
+        rebaseFilePath(m_parked.path, from, to);
     }
     if (files > 0)
         setStatus("Updated references in " + std::to_string(files) + (files == 1 ? " file" : " files"));
@@ -699,8 +903,19 @@ void Editor::onAssetMoved(const OverlayContext& context, const std::string& from
 void Editor::onAssetDeleted(const OverlayContext& context, const std::string& ref)
 {
     m_thumbnails.invalidate(ref);
-    const std::string& scenePath = context.scene.path();
-    if (!scenePath.empty() && assetops::isInsideRoot(scenePath) && pathIsUnder(assetops::toRef(scenePath), ref)) {
+    auto deleted = [&](const std::string& path) {
+        return !path.empty() && assetops::isInsideRoot(path) && pathIsUnder(assetops::toRef(path), ref);
+    };
+    if (m_inPrefab) {
+        if (deleted(m_parked.path)) {
+            m_parked.path.clear();
+            m_parked.forceDirty = true;
+        }
+        if (deleted(context.scene.path())) {
+            closePrefab(context);
+            setStatus("The open prefab was deleted");
+        }
+    } else if (deleted(context.scene.path())) {
         context.scene.setPath("");
         m_forceDirty = true;
     }
@@ -729,12 +944,24 @@ void Editor::createPrefab(const OverlayContext& context, entt::entity e, const f
     const Name* name = scene.registry().try_get<Name>(e);
     std::string stem = name && assetops::validName(name->value) ? name->value : std::string("Prefab");
     const fs::path path = assetops::uniquePath(folder, stem, ".prefab");
+    // Saved without its link to a prefab it may be an instance of; then it becomes an
+    // instance of the new one
+    entt::registry& registry = scene.registry();
+    std::optional<PrefabInstance> link;
+    if (const PrefabInstance* instance = registry.try_get<PrefabInstance>(e))
+        link = *instance;
+    registry.remove<PrefabInstance>(e);
+    const std::string text = saveEntityTree(scene, context.components, e);
     std::string error;
-    if (!assetops::writeText(path, saveEntityTree(scene, context.components, e) + "\n", &error)) {
+    if (!assetops::writeText(path, text + "\n", &error)) {
+        if (link)
+            registry.emplace<PrefabInstance>(e, *link);
         setStatus("Can't create prefab: " + error);
         return;
     }
     const std::string ref = assetops::toRef(path);
+    registry.emplace<PrefabInstance>(e, ref);
+    m_forceDirty = true;
     m_projectPanel.refresh();
     m_projectPanel.ping(ref);
     setStatus("Created " + assetops::displayPath(ref));

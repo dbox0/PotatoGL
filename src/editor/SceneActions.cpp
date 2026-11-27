@@ -8,6 +8,7 @@
 
 #include "engine/assets/AssetTypes.h"
 #include "engine/reflect/ComponentRegistry.h"
+#include "engine/scene/Prefab.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
@@ -91,6 +92,15 @@ std::string groupName(const char* verb, Scene& scene, const std::vector<entt::en
     return std::string(verb) + " " + std::to_string(entities.size()) + " Objects";
 }
 
+// A world position in parent's space; parent = entt::null: the top level
+glm::vec3 localPoint(const entt::registry& registry, entt::entity parent, const glm::vec3& world)
+{
+    if (parent == entt::null)
+        return world;
+    const WorldTransform* parentWorld = registry.try_get<WorldTransform>(parent);
+    return parentWorld ? glm::vec3(glm::inverse(parentWorld->matrix) * glm::vec4(world, 1.0f)) : world;
+}
+
 void pushCreated(EditContext& context, EditHistory& history, const char* verb,
                  const std::vector<entt::entity>& created)
 {
@@ -121,6 +131,14 @@ std::vector<entt::entity> selectionRoots(const EditContext& context, const Selec
             roots.push_back(e);
     }
     return roots;
+}
+
+entt::entity SceneActions::parentFor(const EditContext& context, entt::entity requested) const
+{
+    const entt::registry& registry = context.scene.registry();
+    if (requested != entt::null && registry.valid(requested))
+        return requested;
+    return m_topParent != entt::null && registry.valid(m_topParent) ? m_topParent : entt::null;
 }
 
 void SceneActions::drawCreateItems(entt::entity parent)
@@ -192,13 +210,13 @@ void SceneActions::applyCreate(EditContext& context, EditHistory& history, Selec
 {
     Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
-    const entt::entity parent = request.parent != entt::null && registry.valid(request.parent) ? request.parent
-                                                                                                : entt::null;
+    const bool topLevel = request.parent == entt::null || !registry.valid(request.parent);
+    const entt::entity parent = parentFor(context, request.parent);
     const KindInfo& info = kindInfo(request.kind);
     const entt::entity e = scene.createGameObject(info.name, parent);
     Transform& transform = registry.get<Transform>(e);
-    if (parent == entt::null)
-        transform.setPos(spawn);
+    if (topLevel)
+        transform.setPos(localPoint(registry, parent, spawn));
     if (info.mesh)
         registry.emplace<MeshRenderer>(e).mesh = info.mesh;
 
@@ -264,8 +282,7 @@ void SceneActions::applyPaste(EditContext& context, EditHistory& history, Select
     std::vector<entt::entity> created;
     for (const Copied& copied : m_clipboard) {
         entt::entity parent = copied.parent == 0 ? entt::null : scene.findByUuid(copied.parent);
-        if (parent != entt::null && !scene.registry().valid(parent))
-            parent = entt::null;
+        parent = parentFor(context, parent);
         const entt::entity e = loadEntityTree(scene, context.components, copied.tree, parent, SIZE_MAX, true);
         if (e != entt::null)
             created.push_back(e);
@@ -293,8 +310,8 @@ void SceneActions::applyInstantiate(EditContext& context, EditHistory& history, 
 {
     Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
-    const entt::entity parent = request.parent != entt::null && registry.valid(request.parent) ? request.parent
-                                                                                                : entt::null;
+    const bool topLevel = request.parent == entt::null || !registry.valid(request.parent);
+    const entt::entity parent = parentFor(context, request.parent);
     const std::string name = std::filesystem::path(request.asset).stem().string();
     entt::entity e = entt::null;
     switch (assetKindOf(request.asset)) {
@@ -303,8 +320,8 @@ void SceneActions::applyInstantiate(EditContext& context, EditHistory& history, 
         registry.emplace<MeshRenderer>(e).mesh = request.asset;
         break;
     case AssetKind::Prefab:
-        if (const auto text = assetops::readText(assetops::fromRef(request.asset)))
-            e = loadEntityTree(scene, context.components, *text, parent, SIZE_MAX, true);
+        if (request.asset != m_openPrefab)
+            e = instantiatePrefab(scene, context.components, request.asset, parent);
         break;
     default:
         break;
@@ -313,10 +330,10 @@ void SceneActions::applyInstantiate(EditContext& context, EditHistory& history, 
         return;
 
     Transform& transform = registry.get<Transform>(e);
-    if (request.placement == Placement::Spawn && parent == entt::null)
-        transform.setPos(spawn);
+    if (request.placement == Placement::Spawn && topLevel)
+        transform.setPos(localPoint(registry, parent, spawn));
     else if (request.placement == Placement::At)
-        transform.setPos(request.position);
+        transform.setPos(localPoint(registry, parent, request.position));
     else if (parent != entt::null)
         transform.setPos(glm::vec3(0.0f));
     history.push(createdEntityCommand(scene, e));

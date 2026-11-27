@@ -23,6 +23,12 @@ struct MeshRenderer
     MaterialId materialId = InvalidMaterial;  // runtime handle, reset whenever material changes
 };
 
+// On the root of a prefab instance: the .prefab it's rebuilt from when that changes
+struct PrefabInstance
+{
+    std::string prefab;
+};
+
 // Stable identity: saved with the scene and kept across save/load, Play/Stop and undo,
 // unlike entt::entity handles. 0 means none (and stands for the root in references).
 struct Uuid

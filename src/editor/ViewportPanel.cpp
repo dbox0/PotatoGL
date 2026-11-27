@@ -10,7 +10,7 @@ void ViewportPanel::draw(const char* placeholder, const std::function<void()>& o
         m_focusRequested = false;
     }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    m_visible = ImGui::Begin(m_name, nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    m_visible = ImGui::Begin(m_label.c_str(), nullptr, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     ImGui::PopStyleVar();
 
     m_hovered = m_visible && ImGui::IsWindowHovered();

@@ -151,6 +151,8 @@ add_library(engine STATIC
         src/engine/scene/ComponentReflection.cpp
         src/engine/scene/ComponentReflection.h
         src/engine/scene/Components.h
+        src/engine/scene/Prefab.cpp
+        src/engine/scene/Prefab.h
         src/engine/scene/Scene.cpp
         src/engine/scene/Scene.h
         src/engine/scene/SceneSerializer.cpp

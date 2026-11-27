@@ -25,6 +25,7 @@ public:
     {
         std::string ping;         // show this asset in the Project view
         std::string openScene;
+        std::string openPrefab;
         std::string instantiate;  // model or prefab
         std::vector<std::string> errors;
     };

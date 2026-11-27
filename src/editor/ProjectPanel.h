@@ -25,6 +25,7 @@ public:
     struct Events
     {
         std::optional<std::string> openScene;    // ref
+        std::optional<std::string> openPrefab;   // ref
         std::optional<std::string> instantiate;  // ref of a model or prefab
         std::vector<std::pair<std::string, std::string>> moved;  // refs: from, to
         std::vector<std::string> deleted;        // refs
