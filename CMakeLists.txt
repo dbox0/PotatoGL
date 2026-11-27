@@ -167,6 +167,10 @@ if(BUILD_EDITOR)
     add_library(editor STATIC
             src/editor/DebugPanel.cpp
             src/editor/DebugPanel.h
+            src/editor/EditCommands.cpp
+            src/editor/EditCommands.h
+            src/editor/EditHistory.cpp
+            src/editor/EditHistory.h
             src/editor/Editor.cpp
             src/editor/Editor.h
             src/editor/InspectorPanel.cpp

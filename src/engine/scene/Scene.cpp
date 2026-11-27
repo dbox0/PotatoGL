@@ -3,19 +3,63 @@
 #include "engine/scene/Camera.h"
 #include "engine/scene/Transform.h"
 
+#include <random>
+
 Scene::Scene()
 {
     m_root = m_registry.create();
     m_registry.emplace<Relationship>(m_root);
     m_registry.on_destroy<Relationship>().connect<&Scene::onRelationshipDestroy>(*this);
+    m_registry.on_destroy<Uuid>().connect<&Scene::onUuidDestroy>(*this);
 }
 
 Scene::~Scene()
 {
     m_registry.on_destroy<Relationship>().disconnect<&Scene::onRelationshipDestroy>(*this);
+    m_registry.on_destroy<Uuid>().disconnect<&Scene::onUuidDestroy>(*this);
 }
 
-void Scene::link(entt::entity e, entt::entity parent)
+static std::uint64_t newUuid()
+{
+    static std::mt19937_64 rng{std::random_device{}()};
+    std::uint64_t value;
+    do {
+        value = rng();
+    } while (value == 0);
+    return value;
+}
+
+void Scene::onUuidDestroy(entt::registry&, entt::entity e)
+{
+    const auto it = m_byUuid.find(m_registry.get<Uuid>(e).value);
+    if (it != m_byUuid.end() && it->second == e)
+        m_byUuid.erase(it);
+}
+
+std::uint64_t Scene::uuidOf(entt::entity e) const
+{
+    const Uuid* uuid = m_registry.try_get<Uuid>(e);
+    return uuid ? uuid->value : 0;
+}
+
+entt::entity Scene::findByUuid(std::uint64_t uuid) const
+{
+    if (uuid == 0)
+        return m_root;
+    const auto it = m_byUuid.find(uuid);
+    return it == m_byUuid.end() ? entt::null : it->second;
+}
+
+std::size_t Scene::siblingIndex(entt::entity e) const
+{
+    std::size_t index = 0;
+    for (entt::entity s = m_registry.get<Relationship>(e).prevSibling; s != entt::null;
+         s = m_registry.get<Relationship>(s).prevSibling)
+        ++index;
+    return index;
+}
+
+void Scene::link(entt::entity e, entt::entity parent, std::size_t index)
 {
     Relationship& rel = m_registry.get<Relationship>(e);
     Relationship& parentRel = m_registry.get<Relationship>(parent);
@@ -23,13 +67,30 @@ void Scene::link(entt::entity e, entt::entity parent)
     rel.prevSibling = entt::null;
     rel.nextSibling = entt::null;
 
-    if (parentRel.lastChild == entt::null) {
-        parentRel.firstChild = e;
-    } else {
-        m_registry.get<Relationship>(parentRel.lastChild).nextSibling = e;
-        rel.prevSibling = parentRel.lastChild;
+    entt::entity next = entt::null;  // insert before this one; null appends
+    if (index < parentRel.childCount) {
+        next = parentRel.firstChild;
+        for (std::size_t i = 0; i < index; ++i)
+            next = m_registry.get<Relationship>(next).nextSibling;
     }
-    parentRel.lastChild = e;
+
+    if (next == entt::null) {
+        if (parentRel.lastChild == entt::null)
+            parentRel.firstChild = e;
+        else
+            m_registry.get<Relationship>(parentRel.lastChild).nextSibling = e;
+        rel.prevSibling = parentRel.lastChild;
+        parentRel.lastChild = e;
+    } else {
+        Relationship& nextRel = m_registry.get<Relationship>(next);
+        rel.prevSibling = nextRel.prevSibling;
+        rel.nextSibling = next;
+        if (nextRel.prevSibling == entt::null)
+            parentRel.firstChild = e;
+        else
+            m_registry.get<Relationship>(nextRel.prevSibling).nextSibling = e;
+        nextRel.prevSibling = e;
+    }
     ++parentRel.childCount;
 }
 
@@ -66,14 +127,18 @@ void Scene::onRelationshipDestroy(entt::registry&, entt::entity e)
     });
 }
 
-entt::entity Scene::createGameObject(std::string name, entt::entity parent)
+entt::entity Scene::createGameObject(std::string name, entt::entity parent, std::uint64_t uuid, std::size_t index)
 {
     const entt::entity e = m_registry.create();
+    if (uuid == 0 || m_byUuid.contains(uuid))
+        uuid = newUuid();
+    m_registry.emplace<Uuid>(e, uuid);
+    m_byUuid[uuid] = e;
     m_registry.emplace<Name>(e, std::move(name));
     m_registry.emplace<Transform>(e);
     m_registry.emplace<WorldTransform>(e);
     m_registry.emplace<Relationship>(e);
-    link(e, parent == entt::null ? m_root : parent);
+    link(e, parent == entt::null ? m_root : parent, index);
     return e;
 }
 
@@ -96,14 +161,14 @@ void Scene::clear()
         destroyRecursive(child);
 }
 
-bool Scene::setParent(entt::entity e, entt::entity parent)
+bool Scene::setParent(entt::entity e, entt::entity parent, std::size_t index)
 {
     if (parent == entt::null)
         parent = m_root;
     if (e == m_root || e == parent || isAncestor(e, parent))
         return false;
     unlink(e);
-    link(e, parent);
+    link(e, parent, index);
     return true;
 }
 

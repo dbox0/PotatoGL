@@ -1,5 +1,7 @@
 #include "SceneHierarchyPanel.h"
 
+#include "editor/EditCommands.h"
+
 #include "engine/scene/Scene.h"
 
 #include <imgui.h>
@@ -9,7 +11,8 @@
 
 static constexpr const char* EntityPayload = "SCENE_ENTITY";
 
-void SceneHierarchyPanel::draw(Scene& scene, entt::entity& selected)
+void SceneHierarchyPanel::draw(Scene& scene, const ComponentRegistry& components, EditHistory& history,
+                               entt::entity& selected)
 {
     m_selected = &selected;
     if (*m_selected != entt::null && !scene.registry().valid(*m_selected))
@@ -50,7 +53,7 @@ void SceneHierarchyPanel::draw(Scene& scene, entt::entity& selected)
     }
     ImGui::End();
 
-    applyPendingEdits(scene);
+    applyPendingEdits(scene, components, history);
 }
 
 void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e)
@@ -110,20 +113,23 @@ void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e)
     }
 }
 
-void SceneHierarchyPanel::applyPendingEdits(Scene& scene)
+void SceneHierarchyPanel::applyPendingEdits(Scene& scene, const ComponentRegistry& components, EditHistory& history)
 {
+    EditContext context{scene, components};
     if (m_reparentChild != entt::null) {
-        scene.setParent(m_reparentChild, m_reparentTarget);
+        const entt::entity parent = m_reparentTarget == scene.root() ? entt::null : m_reparentTarget;
+        history.execute(context, reparentCommand(scene, m_reparentChild, parent));
         m_reparentChild = entt::null;
         m_reparentTarget = entt::null;
     }
     if (m_createRequested) {
         *m_selected = scene.createGameObject("GameObject", m_createParent);
+        history.push(createdEntityCommand(scene, *m_selected));
         m_createRequested = false;
         m_createParent = entt::null;
     }
     if (m_destroyTarget != entt::null) {
-        scene.destroyRecursive(m_destroyTarget);
+        history.execute(context, destroyEntityCommand(scene, m_destroyTarget));
         if (!scene.registry().valid(*m_selected))
             *m_selected = entt::null;
         m_destroyTarget = entt::null;

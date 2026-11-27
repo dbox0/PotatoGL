@@ -1,5 +1,7 @@
 #include "SceneViewPanel.h"
 
+#include "editor/EditCommands.h"
+
 #include "engine/app/CameraController.h"
 #include "engine/app/Overlay.h"
 #include "engine/render/Renderer.h"
@@ -15,7 +17,7 @@
 
 static constexpr glm::vec4 OutlineColor(1.0f, 0.25f, 0.0f, 1.0f);  // linear
 
-void SceneViewPanel::draw(const OverlayContext& context, entt::entity& selected)
+void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, entt::entity& selected)
 {
     m_view.draw(nullptr, [&] {
         // No widget over the image: ImGuizmo only grabs the mouse when no item is hovered
@@ -24,8 +26,8 @@ void SceneViewPanel::draw(const OverlayContext& context, entt::entity& selected)
         const ImVec2 mouse = ImGui::GetMousePos();
 
         drawToolbar();
-        drawGizmo(context, selected);
-        handleHotkeys(context, selected);
+        drawGizmo(context, history, selected);
+        handleHotkeys(context, history, selected);
 
         if (clicked && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
             const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
@@ -61,7 +63,7 @@ void SceneViewPanel::drawToolbar()
         m_local = !m_local;
 }
 
-void SceneViewPanel::handleHotkeys(const OverlayContext& context, entt::entity& selected)
+void SceneViewPanel::handleHotkeys(const OverlayContext& context, EditHistory& history, entt::entity& selected)
 {
     if (!(m_view.hovered() || m_view.focused()) || ImGui::GetIO().WantTextInput || context.controller.isLooking() ||
         ImGuizmo::IsUsing())
@@ -78,12 +80,13 @@ void SceneViewPanel::handleHotkeys(const OverlayContext& context, entt::entity& 
         m_local = !m_local;
     if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) && selected != entt::null &&
         context.scene.registry().valid(selected)) {
-        context.scene.destroyRecursive(selected);
+        EditContext edit{context.scene, context.components};
+        history.execute(edit, destroyEntityCommand(context.scene, selected));
         selected = entt::null;
     }
 }
 
-void SceneViewPanel::drawGizmo(const OverlayContext& context, entt::entity selected)
+void SceneViewPanel::drawGizmo(const OverlayContext& context, EditHistory& history, entt::entity selected)
 {
     entt::registry& registry = context.scene.registry();
     const bool editable = m_tool != Tool::None && selected != entt::null && registry.valid(selected) &&
@@ -91,7 +94,10 @@ void SceneViewPanel::drawGizmo(const OverlayContext& context, entt::entity selec
 
     // Drag ended (or its object went away): one complete edit
     if (m_dragStart && (!ImGuizmo::IsUsing() || !editable || selected != m_dragEntity)) {
-        // Undo goes here: record {m_dragEntity, *m_dragStart, current Transform}
+        if (registry.valid(m_dragEntity) && registry.all_of<Transform>(m_dragEntity)) {
+            EditContext edit{context.scene, context.components};
+            history.push(transformCommand(edit, m_dragEntity, *m_dragStart, registry.get<Transform>(m_dragEntity)));
+        }
         m_dragStart.reset();
         m_dragEntity = entt::null;
     }

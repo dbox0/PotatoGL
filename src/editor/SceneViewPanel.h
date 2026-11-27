@@ -9,6 +9,7 @@
 
 #include <optional>
 
+class EditHistory;
 struct OverlayContext;
 
 // Scene view: editor camera, click to select, Unity-style transform gizmo, selection outline.
@@ -38,11 +39,11 @@ private:
     entt::entity m_dragEntity = entt::null;
 
     void drawToolbar();
-    void handleHotkeys(const OverlayContext& context, entt::entity& selected);
-    void drawGizmo(const OverlayContext& context, entt::entity selected);
+    void handleHotkeys(const OverlayContext& context, EditHistory& history, entt::entity& selected);
+    void drawGizmo(const OverlayContext& context, EditHistory& history, entt::entity selected);
 
 public:
-    void draw(const OverlayContext& context, entt::entity& selected);
+    void draw(const OverlayContext& context, EditHistory& history, entt::entity& selected);
     // After the scene is updated: color, then ids when needed for picking or the outline
     void render(const OverlayContext& context, entt::entity& selected);
     void release();

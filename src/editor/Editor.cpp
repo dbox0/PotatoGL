@@ -79,18 +79,19 @@ void Editor::update(const OverlayContext& context)
         return;
 
     applyDialogResult(context);
+    recordSelection(context.scene);
     updateTitle(context.scene.path());
     drawMenuBar(context);
     drawDockSpace();
     m_debugPanel.draw(context);
-    m_hierarchyPanel.draw(context.scene, m_selected);
-    m_inspectorPanel.draw(context.scene, context.components, m_selected);
+    m_hierarchyPanel.draw(context.scene, context.components, m_history, m_selected);
+    m_inspectorPanel.draw(context.scene, context.components, m_selected, m_history);
     // The tab bar only exists after the first frame, and it selects its last tab
     if (m_selectSceneTab && ImGui::GetFrameCount() > 1) {
         m_sceneView.focus();
         m_selectSceneTab = false;
     }
-    m_sceneView.draw(context, m_selected);
+    m_sceneView.draw(context, m_history, m_selected);
     m_gameView.draw(context.scene.gameCamera() == entt::null ? "No camera in the scene" : nullptr);
     syncSelectedTag(context.scene.registry());
 }
@@ -163,6 +164,13 @@ void Editor::drawMenuBar(const OverlayContext& context)
             showSaveDialog();
     }
 
+    // Global route: a focused text field keeps its own Ctrl+Z
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
+        undo(context);
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal))
+        redo(context);
+
     if (!ImGui::BeginMainMenuBar())
         return;
     if (ImGui::BeginMenu("File")) {
@@ -178,6 +186,16 @@ void Editor::drawMenuBar(const OverlayContext& context)
         ImGui::EndDisabled();
         if (!editing)
             ImGui::TextDisabled("Stop playing to save or load");
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Edit")) {
+        const std::string undoLabel = m_history.canUndo() ? "Undo " + m_history.undoName() : "Undo";
+        const std::string redoLabel = m_history.canRedo() ? "Redo " + m_history.redoName() : "Redo";
+        if (ImGui::MenuItem(undoLabel.c_str(), "Ctrl+Z", false, m_history.canUndo()))
+            undo(context);
+        if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, m_history.canRedo()))
+            redo(context);
         ImGui::EndMenu();
     }
 
@@ -221,31 +239,70 @@ void Editor::drawPlayButtons(const OverlayContext& context)
 }
 
 // Play snapshots the scene; Stop restores it, so nothing done while playing sticks.
-// The selection survives by its position in the file order.
+// Uuids survive the round trip, so the selection and the edit history stay valid.
+// Edits made while playing go to a separate history that Stop throws away.
 void Editor::setPlaying(const OverlayContext& context, bool playing)
 {
     if (playing) {
-        std::vector<entt::entity> order;
-        m_playSnapshot = ::saveScene(context.scene, context.components, &order);
-        m_playSelection = SIZE_MAX;
-        for (std::size_t i = 0; i < order.size(); ++i) {
-            if (order[i] == m_selected)
-                m_playSelection = i;
-        }
+        m_playSnapshot = ::saveScene(context.scene, context.components);
+        m_playSelection = m_selected == entt::null ? 0 : context.scene.uuidOf(m_selected);
+        m_editHistory = std::move(m_history);
+        m_history.clear();
         context.playMode = PlayMode::Play;
         m_gameView.focus();
         return;
     }
 
     context.playMode = PlayMode::Edit;
-    std::vector<entt::entity> order;
     std::string error;
-    if (loadScene(context.scene, context.components, m_playSnapshot, &error, &order))
-        m_selected = m_playSelection < order.size() ? order[m_playSelection] : entt::null;
+    if (loadScene(context.scene, context.components, m_playSnapshot, &error))
+        setSelection(context.scene, m_playSelection);
     else
         setStatus("Restore failed: " + error);
+    m_lastSelection = selectionUuid(context.scene);
+    m_history = std::move(m_editHistory);
+    m_editHistory.clear();
     m_playSnapshot.clear();
     m_sceneView.focus();
+}
+
+void Editor::undo(const OverlayContext& context)
+{
+    EditContext edit{context.scene, context.components};
+    if (const auto selection = m_history.undo(edit))
+        setSelection(context.scene, *selection);
+}
+
+void Editor::redo(const OverlayContext& context)
+{
+    EditContext edit{context.scene, context.components};
+    if (const auto selection = m_history.redo(edit))
+        setSelection(context.scene, *selection);
+}
+
+std::uint64_t Editor::selectionUuid(const Scene& scene) const
+{
+    return m_selected != entt::null && scene.registry().valid(m_selected) ? scene.uuidOf(m_selected) : 0;
+}
+
+// Restoring a selection is not a selection change of its own
+void Editor::setSelection(const Scene& scene, std::uint64_t uuid)
+{
+    m_selected = uuid == 0 ? entt::null : scene.findByUuid(uuid);
+    m_lastSelection = selectionUuid(scene);
+}
+
+// Runs at the start of a frame, so it also sees picks made while rendering the last one
+void Editor::recordSelection(const Scene& scene)
+{
+    const std::uint64_t now = selectionUuid(scene);
+    std::string name = "Clear Selection";
+    if (now != 0) {
+        const Name* label = scene.registry().try_get<Name>(m_selected);
+        name = "Select " + (label && !label->value.empty() ? label->value : std::string("Object"));
+    }
+    m_history.endFrame(m_lastSelection, now, std::move(name));
+    m_lastSelection = now;
 }
 
 void Editor::newScene(const OverlayContext& context)
@@ -254,6 +311,8 @@ void Editor::newScene(const OverlayContext& context)
     scene.clear();
     scene.setPath("");
     m_selected = entt::null;
+    m_lastSelection = 0;
+    m_history.clear();
 
     const entt::entity camera = scene.createGameObject("Main Camera");
     Transform& transform = scene.registry().get<Transform>(camera);
@@ -267,6 +326,8 @@ void Editor::openScene(const OverlayContext& context, const std::string& path)
     std::string error;
     if (loadSceneFile(context.scene, context.components, path, &error)) {
         m_selected = entt::null;
+        m_lastSelection = 0;
+        m_history.clear();
         setStatus("Opened " + std::filesystem::path(path).filename().string());
     } else {
         setStatus("Open failed: " + error);

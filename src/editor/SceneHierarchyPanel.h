@@ -2,6 +2,8 @@
 
 #include <entt/entity/entity.hpp>
 
+class ComponentRegistry;
+class EditHistory;
 class Scene;
 
 class SceneHierarchyPanel
@@ -19,8 +21,8 @@ private:
     bool m_createRequested = false;
 
     void drawNode(Scene& scene, entt::entity e);
-    void applyPendingEdits(Scene& scene);
+    void applyPendingEdits(Scene& scene, const ComponentRegistry& components, EditHistory& history);
 
 public:
-    void draw(Scene& scene, entt::entity& selected);
+    void draw(Scene& scene, const ComponentRegistry& components, EditHistory& history, entt::entity& selected);
 };

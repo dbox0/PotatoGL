@@ -6,6 +6,7 @@
 #include <glm/glm.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 struct Name
@@ -18,6 +19,13 @@ struct MeshRenderer
 {
     std::string mesh;              // model path relative to the resource dir, e.g. "assets/Duck.glb"
     ModelId model = InvalidModel;  // runtime handle, reset whenever mesh changes
+};
+
+// Stable identity: saved with the scene and kept across save/load, Play/Stop and undo,
+// unlike entt::entity handles. 0 means none (and stands for the root in references).
+struct Uuid
+{
+    std::uint64_t value = 0;
 };
 
 // Intrusive doubly linked child list; children are kept in insertion order

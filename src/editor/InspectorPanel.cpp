@@ -1,5 +1,7 @@
 #include "InspectorPanel.h"
 
+#include "editor/EditCommands.h"
+
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Scene.h"
 
@@ -80,8 +82,10 @@ static bool drawField(const FieldInfo& field, void* data)
     return changed;
 }
 
-void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, entt::entity selected)
+void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, entt::entity selected,
+                          EditHistory& history)
 {
+    m_history = &history;
     entt::registry& registry = scene.registry();
     if (ImGui::Begin("Inspector")) {
         if (selected == entt::null || !registry.valid(selected)) {
@@ -109,10 +113,11 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
     ImGui::End();
 
     if (selected != entt::null && registry.valid(selected)) {
+        EditContext context{scene, components};
         if (m_pendingAdd && !m_pendingAdd->has(registry, selected))
-            m_pendingAdd->add(registry, selected);
+            history.execute(context, addComponentCommand(scene, selected, *m_pendingAdd));
         if (m_pendingRemove && m_pendingRemove->has(registry, selected))
-            m_pendingRemove->remove(registry, selected);
+            history.execute(context, removeComponentCommand(scene, selected, *m_pendingRemove));
     }
     m_pendingAdd = nullptr;
     m_pendingRemove = nullptr;
@@ -135,8 +140,21 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
             ImGui::TextDisabled("No editable fields");
         else
             for (const FieldInfo& field : info.fields) {
-                if (field.visible)
-                    drawField(field, data);
+                if (!field.visible)
+                    continue;
+                // Own ID scope: a field may share its label with the header ("Name")
+                ImGui::PushID(field.key.c_str());
+                const FieldValue before = field.get(data);
+                drawField(field, data);
+                if (ImGui::IsItemActivated())
+                    m_editStart = before;
+                if (ImGui::IsItemDeactivated() && m_editStart) {
+                    const FieldValue after = field.get(data);
+                    if (ImGui::IsItemDeactivatedAfterEdit() && after != *m_editStart)
+                        m_history->push(setFieldCommand(scene, e, info, field, *m_editStart, after));
+                    m_editStart.reset();
+                }
+                ImGui::PopID();
             }
     }
     ImGui::PopID();

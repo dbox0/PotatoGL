@@ -1,0 +1,93 @@
+#include "EditHistory.h"
+
+#include <algorithm>
+
+bool EditHistory::execute(EditContext& context, std::unique_ptr<EditCommand> command)
+{
+    if (!command || !command->redo(context))
+        return false;
+    push(std::move(command));
+    return true;
+}
+
+void EditHistory::push(std::unique_ptr<EditCommand> command)
+{
+    if (command)
+        pushStep({std::move(command), {}, 0, 0});
+}
+
+void EditHistory::pushStep(Step step)
+{
+    m_redo.clear();
+    m_undo.push_back(std::move(step));
+    ++m_pendingSteps;
+    if (m_undo.size() > MaxSteps)
+        m_undo.erase(m_undo.begin());
+    m_pendingSteps = std::min(m_pendingSteps, m_undo.size());
+}
+
+void EditHistory::endFrame(std::uint64_t selectionBefore, std::uint64_t selectionAfter, std::string selectName)
+{
+    if (m_pendingSteps > 0) {
+        const std::size_t first = m_undo.size() - m_pendingSteps;
+        for (std::size_t i = first; i < m_undo.size(); ++i) {
+            m_undo[i].selectionBefore = i == first ? selectionBefore : selectionAfter;
+            m_undo[i].selectionAfter = selectionAfter;
+        }
+    } else if (selectionBefore != selectionAfter) {
+        pushStep({nullptr, std::move(selectName), selectionBefore, selectionAfter});
+    }
+    m_pendingSteps = 0;
+}
+
+std::optional<std::uint64_t> EditHistory::undo(EditContext& context)
+{
+    while (!m_undo.empty()) {
+        Step step = std::move(m_undo.back());
+        m_undo.pop_back();
+        m_pendingSteps = std::min(m_pendingSteps, m_undo.size());
+        if (!step.command || step.command->undo(context)) {
+            const std::uint64_t selection = step.selectionBefore;
+            m_redo.push_back(std::move(step));
+            return selection;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint64_t> EditHistory::redo(EditContext& context)
+{
+    while (!m_redo.empty()) {
+        Step step = std::move(m_redo.back());
+        m_redo.pop_back();
+        if (!step.command || step.command->redo(context)) {
+            const std::uint64_t selection = step.selectionAfter;
+            m_undo.push_back(std::move(step));
+            return selection;
+        }
+    }
+    return std::nullopt;
+}
+
+void EditHistory::clear()
+{
+    m_undo.clear();
+    m_redo.clear();
+    m_pendingSteps = 0;
+}
+
+std::string EditHistory::undoName() const
+{
+    if (m_undo.empty())
+        return {};
+    const Step& step = m_undo.back();
+    return step.command ? step.command->name() : step.name;
+}
+
+std::string EditHistory::redoName() const
+{
+    if (m_redo.empty())
+        return {};
+    const Step& step = m_redo.back();
+    return step.command ? step.command->name() : step.name;
+}

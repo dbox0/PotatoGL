@@ -47,6 +47,7 @@ hot reloads it. A shader that fails to compile keeps the previous program runnin
 | X | Gizmo in local / global space |
 | Hold Ctrl while dragging | Snap: 0.5 units, 15 degrees, 0.1 scale |
 | Delete | Remove the selection (Scene view or Hierarchy) |
+| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo |
 | F1 | Toggle editor; hidden, the game camera fills the window |
 | Esc | Quit |
 
@@ -54,6 +55,11 @@ Editor (panels dock anywhere; the layout is saved to `imgui.ini`):
 
 - **File** menu: New Scene (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S), Save As
   (Ctrl+Shift+S). Disabled while playing.
+- **Edit** menu: Undo / Redo. Covers gizmo drags, inspector edits (one step per drag
+  or text edit), adding and removing components, and creating, deleting and reparenting
+  objects. Selection changes are steps too, and every step restores the selection it had
+(undoing a delete reselects the object). New and Open clear the history; edits made while playing have their own
+  history, discarded on Stop.
 - **Play / Pause** (top bar): the editor starts in Edit mode, where the game doesn't
   update. Play snapshots the scene, runs it and focuses the Game view, which then gets
   keyboard input. Stop restores the snapshot, like Unity.
@@ -74,11 +80,11 @@ the default duck scene in code, and Ctrl+S saves it there. Scene files are JSON:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "entities": [
     {
-      "id": 2,
-      "parent": 1,
+      "uuid": "3f9c2a71d04b8e15",
+      "parent": "a2b7c90e14f3d566",
       "components": {
         "Name": { "value": "Duck 0" },
         "Transform": { "position": [-11.25, 0.0, -11.25], "rotation": [0.0, 0.0, 0.0, 1.0], "scale": [1.0, 1.0, 1.0] },
@@ -92,7 +98,9 @@ the default duck scene in code, and Ctrl+S saves it there. Scene files are JSON:
 
 Every registered component is saved with its fields (see *Reflection* in
 [docs/Scripting.md](docs/Scripting.md)). Parents come before children, and siblings keep
-their order. Unknown components and fields are skipped with a warning, and missing fields
+their order. Each object has a stable `uuid`, kept across save/load, Play/Stop and undo;
+`parent` and entity fields refer to it. Version 1 files (integer ids) still load and are
+written as version 2 on the next save. Unknown components and fields are skipped with a warning, and missing fields
 keep their defaults. `MeshRenderer` stores a model path; the `AssetCache` loads each path
 once.
 
