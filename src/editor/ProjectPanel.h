@@ -27,7 +27,7 @@ public:
         std::optional<std::string> openScene;    // ref
         std::optional<std::string> openPrefab;   // ref
         std::optional<std::string> instantiate;  // ref of a model or prefab
-        std::optional<std::string> openAnimationViewer;  // ref of a model; the editor checks it's skinned
+        std::optional<std::string> openAnimationViewer;  // a model (the editor checks it's skinned), .anim or .pose
         std::vector<std::pair<std::string, std::string>> moved;  // refs: from, to
         std::vector<std::string> deleted;        // refs
         std::optional<std::filesystem::path> createScene;  // in this folder

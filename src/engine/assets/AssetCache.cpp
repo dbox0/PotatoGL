@@ -5,8 +5,14 @@
 #include "engine/assets/Primitives.h"
 #include "engine/core/Paths.h"
 
+#include "engine/anim/AnimAsset.h"
+#include "engine/assets/AssetTypes.h"
+
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <vector>
 
 bool pathIsUnder(const std::string& path, const std::string& folder)
@@ -87,8 +93,24 @@ std::shared_ptr<const SkeletonData> AssetCache::skeleton(const std::string& mode
 std::shared_ptr<const ClipData> AssetCache::clip(const std::string& ref)
 {
     const std::size_t hash = ref.find('#');
-    if (hash == std::string::npos)
-        return nullptr;
+    if (hash == std::string::npos) {
+        if (assetKindOf(ref) != AssetKind::Animation)
+            return nullptr;
+        if (const auto it = m_animFiles.find(ref); it != m_animFiles.end())
+            return it->second;
+        std::shared_ptr<const ClipData> loaded;
+        std::ifstream file(resourcePath(ref), std::ios::binary);
+        std::stringstream text;
+        text << file.rdbuf();
+        ClipData baked;
+        std::string error;
+        if (file && loadAnimText(text.str(), nullptr, &baked, std::filesystem::path(ref).stem().string(), &error))
+            loaded = std::make_shared<const ClipData>(std::move(baked));
+        else
+            std::fprintf(stderr, "Failed to load clip '%s': %s\n", ref.c_str(), error.empty() ? "can't read it" : error.c_str());
+        m_animFiles.emplace(ref, loaded);
+        return loaded;
+    }
     const std::string path = ref.substr(0, hash);
     model(path);
     const auto it = m_animations.find(path);
@@ -100,6 +122,15 @@ std::shared_ptr<const ClipData> AssetCache::clip(const std::string& ref)
             return clip;
     }
     return nullptr;
+}
+
+void AssetCache::setClip(const std::string& path, std::shared_ptr<const ClipData> clip)
+{
+    if (clip)
+        m_animFiles[path] = std::move(clip);
+    else
+        m_animFiles.erase(path);
+    ++m_clipVersion;
 }
 
 std::vector<std::string> AssetCache::clipRefs(const std::string& modelPath)
@@ -180,6 +211,8 @@ void AssetCache::rename(const std::string& from, const std::string& to)
 {
     renameKeys(m_models, from, to);
     renameKeys(m_animations, from, to);
+    renameKeys(m_animFiles, from, to);
+    ++m_clipVersion;
     renameKeys(m_textures, from, to);
     renameKeys(m_materials, from, to);
     for (auto& [path, entry] : m_materials) {

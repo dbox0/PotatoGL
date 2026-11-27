@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct Name
@@ -123,7 +124,10 @@ struct Animator
     bool started = false;  // playOnStart was applied
     bool resolved = false; // clip looked up since it last changed
     bool evaluated = false;
+    std::uint64_t clipVersion = 0;  // AssetCache::clipVersion() when the clip was resolved
     std::shared_ptr<const ClipData> clipData;
+    // Local transforms put over the sampled pose (the Animation Viewer's Poser); never saved
+    std::vector<std::pair<int, JointTrs>> overrides;
     const SkeletonData* boundTo = nullptr;
     std::vector<std::int16_t> binding;
     Pose pose;

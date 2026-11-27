@@ -1,18 +1,23 @@
 #include "AnimationViewer.h"
 
+#include "editor/AssetOps.h"
+
 #include "engine/anim/Clip.h"
 #include "engine/anim/Pose.h"
 #include "engine/app/Overlay.h"
 #include "engine/assets/AssetCache.h"
+#include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
 #include "engine/scene/Components.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/Transform.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <imgui.h>
 #include <imgui_internal.h>
+#include <ImGuizmo.h>
 
 #include <algorithm>
 #include <cmath>
@@ -69,6 +74,34 @@ struct Projector
 };
 }  // namespace
 
+// One Poser step: the viewer's pose (and an authored clip) before and after
+class PoserCommand final : public EditCommand
+{
+private:
+    AnimationViewer& m_viewer;
+    std::string m_name;
+    AnimationViewer::PoserState m_before;
+    AnimationViewer::PoserState m_after;
+
+public:
+    PoserCommand(AnimationViewer& viewer, std::string name, AnimationViewer::PoserState before,
+                 AnimationViewer::PoserState after)
+        : m_viewer(viewer), m_name(std::move(name)), m_before(std::move(before)), m_after(std::move(after))
+    {
+    }
+    bool undo(EditContext&) override
+    {
+        m_viewer.restore(m_before);
+        return true;
+    }
+    bool redo(EditContext&) override
+    {
+        m_viewer.restore(m_after);
+        return true;
+    }
+    std::string name() const override { return m_name; }
+};
+
 AnimationViewer::AnimationViewer() = default;
 AnimationViewer::~AnimationViewer() = default;
 
@@ -118,8 +151,21 @@ bool AnimationViewer::open(AssetCache& assets, Renderer& renderer, const std::st
             m_children[static_cast<std::size_t>(m_skeleton->parents[j])].push_back(static_cast<int>(j));
     }
 
+    m_skeletonHash = skeletonHash(*m_skeleton);
+    m_rig = detectHumanoid(*m_skeleton);
+    m_poles.assign(m_rig.limbs.size(), std::nullopt);
+    m_pins.assign(m_rig.limbs.size(), Pin{});
+    m_poleLimb = -1;
+    m_planted.clear();
     m_clips = assets.clipRefs(model);
+    m_embeddedClips = m_clips.size();
+    refreshAssets();
     const auto start = std::find(m_clips.begin(), m_clips.end(), clip);
+    m_history.clear();
+    m_overrides.clear();
+    m_posing = false;
+    m_baseBind = false;
+    m_status.clear();
     m_joint = -1;
     m_loop = true;
     m_speed = 1.0f;
@@ -136,7 +182,15 @@ void AnimationViewer::close()
     m_skeleton.reset();
     m_clipData.reset();
     m_clips.clear();
+    m_poses.clear();
+    m_embeddedClips = 0;
     m_clip = -1;
+    m_authored.reset();
+    m_overrides.clear();
+    m_history.clear();
+    m_posing = false;
+    m_gizmoDragging = false;
+    m_fieldStart.reset();
     m_children.clear();
     m_markers.clear();
     m_timelineDrag = Drag::None;
@@ -178,7 +232,18 @@ void AnimationViewer::selectClip(AssetCache& assets, int index)
         return;
     }
     m_clip = index;
-    m_clipData = assets.clip(m_clips[static_cast<std::size_t>(index)]);
+    const std::string& ref = m_clips[static_cast<std::size_t>(index)];
+    m_clipData = assets.clip(ref);
+    m_authored.reset();
+    if (ref.find('#') == std::string::npos) {
+        AuthoredClip authored;
+        std::string error;
+        const auto text = assetops::readText(assetops::fromRef(ref));
+        if (text && loadAnimText(*text, &authored, nullptr, {}, &error))
+            m_authored = std::move(authored);
+        else
+            m_status = "Can't read the keys of " + clipName(ref) + (error.empty() ? "" : ": " + error);
+    }
     m_in = 0;
     m_out = lastFrame();
     m_time = 0.0f;
@@ -238,7 +303,10 @@ void AnimationViewer::advance(float dt)
 void AnimationViewer::applyTime()
 {
     Animator& animator = m_scene->registry().get<Animator>(m_actor);
-    const std::string ref = m_clip >= 0 ? m_clips[static_cast<std::size_t>(m_clip)] : std::string();
+    const std::string ref = m_posing && m_baseBind ? std::string() : clipRef();
+    animator.overrides.clear();
+    if (m_posing)
+        animator.overrides.assign(m_overrides.begin(), m_overrides.end());
     if (animator.clip != ref) {
         animator.clip = ref;
         animator.resolved = false;
@@ -251,6 +319,9 @@ void AnimationViewer::draw(const OverlayContext& context)
 {
     if (!isOpen())
         return;
+    m_components = &context.components;
+    m_assets = &context.assets;
+    m_history.endFrame({}, {}, {});
     drawDockSpace();
     advance(ImGui::GetIO().DeltaTime);
     drawViewport();
@@ -258,7 +329,10 @@ void AnimationViewer::draw(const OverlayContext& context)
     drawTimeline();
     drawSkeleton();
     drawJoint();
+    drawPopups();
     handleShortcuts();
+    if (isOpen() && m_posing && !m_gizmoDragging)
+        applyPins();
     if (isOpen())
         applyTime();
 }
@@ -299,6 +373,7 @@ void AnimationViewer::drawViewport()
     m_view.draw(nullptr, [&] {
         handleCamera();
         drawViewportOverlay();
+        drawJointGizmo();
 
         const ImGuiStyle& style = ImGui::GetStyle();
         ImGui::SetCursorScreenPos(ImVec2(m_view.imageX() + 8.0f, m_view.imageY() + 8.0f));
@@ -306,6 +381,29 @@ void AnimationViewer::drawViewport()
         if (m_clip >= 0) {
             ImGui::SameLine();
             ImGui::TextUnformatted(clipName(m_clips[static_cast<std::size_t>(m_clip)]).c_str());
+        }
+        if (m_posing) {
+            ImGui::SetCursorScreenPos(ImVec2(m_view.imageX() + 8.0f, m_view.imageY() + 8.0f + ImGui::GetFrameHeightWithSpacing()));
+            struct Button
+            {
+                const char* label;
+                GizmoOp op;
+            };
+            static constexpr Button buttons[] = {{"W Move", GizmoOp::Move}, {"E Rotate", GizmoOp::Rotate}, {"R Scale", GizmoOp::Scale}};
+            for (const Button& b : buttons) {
+                const bool active = m_gizmoOp == b.op;
+                if (active)
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+                if (ImGui::SmallButton(b.label))
+                    m_gizmoOp = b.op;
+                if (active)
+                    ImGui::PopStyleColor();
+                ImGui::SameLine();
+            }
+            if (ImGui::SmallButton(m_gizmoLocal ? "X Local" : "X Global"))
+                m_gizmoLocal = !m_gizmoLocal;
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Pose mode");
         }
         const char* closeLabel = "Close Viewer";
         const float width = ImGui::CalcTextSize(closeLabel).x + style.FramePadding.x * 2.0f;
@@ -329,7 +427,7 @@ void AnimationViewer::handleCamera()
             m_orbitButton = ImGuiMouseButton_Right;
         else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && io.KeyAlt)
             m_orbitButton = ImGuiMouseButton_Left;
-        else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !m_gizmoHovered) {
             m_pressed = true;
             m_pressPos = glm::vec2(io.MousePos.x, io.MousePos.y);
         }
@@ -360,7 +458,33 @@ void AnimationViewer::handleCamera()
     if (m_pressed && !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
         m_pressed = false;
         const glm::vec2 mouse(io.MousePos.x, io.MousePos.y);
+        bool handled = false;
         if (glm::length(mouse - m_pressPos) < 4.0f) {
+            const float handleRadius = ImGui::GetFontSize() * 0.75f;
+            const Handle* hit = nullptr;
+            for (const Handle& handle : m_handles) {
+                if (glm::length(mouse - handle.pos) <= handleRadius && (!hit || handle.depth < hit->depth))
+                    hit = &handle;
+            }
+            if (hit) {
+                handled = true;
+                // Grabbing a handle is what Pose mode is for
+                if (!m_posing) {
+                    m_posing = true;
+                    m_playing = false;
+                }
+                if (hit->kind == HandleKind::Pole) {
+                    m_poleLimb = hit->index;
+                } else {
+                    m_poleLimb = -1;
+                    m_joint = hit->kind == HandleKind::Hips ? hit->index
+                                                            : effectorJoint(m_rig.limbs[static_cast<std::size_t>(hit->index)]);
+                    m_gizmoOp = GizmoOp::Move;
+                    m_revealJoint = true;
+                }
+            }
+        }
+        if (!handled && glm::length(mouse - m_pressPos) < 4.0f) {
             const float radius = ImGui::GetFontSize() * 0.6f;
             int best = -1;
             float bestDepth = 0.0f;
@@ -372,6 +496,7 @@ void AnimationViewer::handleCamera()
             }
             if (best >= 0) {
                 m_joint = best;
+                m_poleLimb = -1;
                 m_revealJoint = true;
             }
         }
@@ -422,31 +547,91 @@ void AnimationViewer::drawViewportOverlay()
             m_markers.push_back({static_cast<int>(j), glm::vec2(screen.x, screen.y), clip.w});
         }
     }
+    m_handles.clear();
+    if (m_ik && !m_rig.limbs.empty())
+        drawIkHandles(dl, p.viewProj, origin, size);
     dl->PopClipRect();
 }
 
 void AnimationViewer::drawClips(AssetCache& assets)
 {
-    if (ImGui::Begin(ClipsWindow)) {
-        ImGui::TextDisabled("%s", m_model.c_str());
-        ImGui::SeparatorText("Embedded");
-        if (m_clips.empty())
-            ImGui::TextDisabled("This model has no clips");
-        for (std::size_t i = 0; i < m_clips.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
-            const std::shared_ptr<const ClipData> clip = assets.clip(m_clips[i]);
-            if (ImGui::Selectable(clipName(m_clips[i]).c_str(), static_cast<int>(i) == m_clip))
-                selectClip(assets, static_cast<int>(i));
-            if (clip) {
-                char length[32];
-                std::snprintf(length, sizeof(length), "%.2f s", clip->duration);
-                ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(length).x);
-                ImGui::TextDisabled("%s", length);
-            }
-            ImGui::PopID();
+    if (!ImGui::Begin(ClipsWindow)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextDisabled("%s", m_model.c_str());
+    auto clipRow = [&](std::size_t i) {
+        ImGui::PushID(static_cast<int>(i));
+        const std::shared_ptr<const ClipData> clip = assets.clip(m_clips[i]);
+        if (ImGui::Selectable(clipName(m_clips[i]).c_str(), static_cast<int>(i) == m_clip))
+            selectClip(assets, static_cast<int>(i));
+        if (i >= m_embeddedClips)
+            ImGui::SetItemTooltip("%s", assetops::displayPath(m_clips[i]).c_str());
+        if (clip) {
+            char length[32];
+            std::snprintf(length, sizeof(length), "%.2f s", clip->duration);
+            ImGui::SameLine(ImGui::GetContentRegionMax().x - ImGui::CalcTextSize(length).x);
+            ImGui::TextDisabled("%s", length);
         }
-        ImGui::SeparatorText("Authored");
-        ImGui::TextDisabled("Read-only for now: .anim clips come with the Poser");
+        ImGui::PopID();
+    };
+
+    ImGui::SeparatorText("Embedded");
+    if (m_embeddedClips == 0)
+        ImGui::TextDisabled("This model has no clips");
+    for (std::size_t i = 0; i < m_embeddedClips; ++i)
+        clipRow(i);
+
+    ImGui::SeparatorText("Authored");
+    if (ImGui::SmallButton("New")) {
+        m_nameAction = NameAction::NewClip;
+        std::snprintf(m_nameBuffer, sizeof(m_nameBuffer), "New Clip");
+        m_openNamePopup = true;
+    }
+    ImGui::SetItemTooltip("An empty .anim next to the model");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_clip < 0);
+    if (ImGui::SmallButton("Duplicate")) {
+        m_nameAction = NameAction::DuplicateClip;
+        std::snprintf(m_nameBuffer, sizeof(m_nameBuffer), "%s", clipName(clipRef()).c_str());
+        m_openNamePopup = true;
+    }
+    ImGui::SetItemTooltip("An editable .anim copy of the selected clip");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_authored);
+    if (ImGui::SmallButton("Delete")) {
+        m_deleteRef = clipRef();
+        m_openDeletePopup = true;
+    }
+    ImGui::EndDisabled();
+    if (m_clips.size() == m_embeddedClips)
+        ImGui::TextDisabled("No .anim clips for this skeleton yet");
+    for (std::size_t i = m_embeddedClips; i < m_clips.size(); ++i)
+        clipRow(i);
+
+    ImGui::SeparatorText("Poses");
+    ImGui::BeginDisabled(m_overrides.empty());
+    if (ImGui::SmallButton("Save Pose")) {
+        m_nameAction = NameAction::SavePose;
+        std::snprintf(m_nameBuffer, sizeof(m_nameBuffer), "New Pose");
+        m_openNamePopup = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("The posed joints as a .pose next to the model");
+    for (std::size_t i = 0; i < m_poses.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i + 10000));
+        if (ImGui::Selectable(clipName(m_poses[i]).c_str()))
+            openAsset(assets, m_poses[i]);
+        ImGui::SetItemTooltip("Apply %s", assetops::displayPath(m_poses[i]).c_str());
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("Delete")) {
+                m_deleteRef = m_poses[i];
+                m_openDeletePopup = true;
+            }
+            ImGui::EndPopup();
+        }
+        ImGui::PopID();
     }
     ImGui::End();
 }
@@ -494,6 +679,19 @@ void AnimationViewer::drawTimeline()
     ImGui::SetNextItemWidth(70.0f);
     if (ImGui::DragInt("Out", &m_out, 0.2f, m_in, last))
         m_out = std::clamp(m_out, m_in, last);
+    if (m_authored) {
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        int length = m_authored->frameCount;
+        if (ImGui::InputInt("Length", &length, 1, 10, ImGuiInputTextFlags_EnterReturnsTrue) &&
+            std::max(length, 1) != m_authored->frameCount) {
+            PoserState before = state();
+            m_authored->frameCount = std::max(length, 1);
+            commitAuthored();
+            record("Clip Length", std::move(before));
+        }
+        ImGui::SetItemTooltip("Frames in the clip");
+    }
     ImGui::SameLine();
     const float rate = m_clipData ? m_clipData->rate : ClipData::DefaultRate;
     ImGui::Text("Frame %d / %d   %.2f / %.2f s   %.0f fps", currentFrame(), last, m_time,
@@ -536,8 +734,28 @@ void AnimationViewer::drawTimeline()
         }
     }
 
+    // Authored clips: the selected joint's keys, or every key dimmed if no joint is selected
+    auto keyMark = [&](int frame, ImU32 color) {
+        const float x = frameX(static_cast<float>(frame));
+        const float y = bottom - 7.0f;
+        dl->AddQuadFilled(ImVec2(x, y - 4.0f), ImVec2(x + 4.0f, y), ImVec2(x, y + 4.0f), ImVec2(x - 4.0f, y), color);
+    };
+    if (m_authored && m_skeleton) {
+        for (const AuthoredTrack& track : m_authored->tracks) {
+            const bool selected = m_joint >= 0 && track.joint == m_skeleton->names[static_cast<std::size_t>(m_joint)];
+            if (m_joint >= 0 && !selected)
+                continue;
+            const ImU32 color = selected ? IM_COL32(255, 210, 90, 255) : IM_COL32(200, 200, 200, 90);
+            for (const auto& k : track.t)
+                keyMark(k.frame, color);
+            for (const auto& k : track.r)
+                keyMark(k.frame, color);
+            for (const auto& k : track.s)
+                keyMark(k.frame, color);
+        }
+    }
     // Embedded clips have a key on every frame of an animated channel
-    if (m_clipData && m_skeleton && m_joint >= 0) {
+    else if (m_clipData && m_skeleton && m_joint >= 0) {
         const std::uint32_t hash = m_skeleton->nameHashes[static_cast<std::size_t>(m_joint)];
         for (const ClipData::Track& track : m_clipData->tracks) {
             if (track.jointHash != hash || track.animated == 0)
@@ -619,8 +837,10 @@ void AnimationViewer::drawJointTree(int joint)
     }
     const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::intptr_t>(joint)), flags, "%s",
                                         m_skeleton->names[static_cast<std::size_t>(joint)].c_str());
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
         m_joint = joint;
+        m_poleLimb = -1;
+    }
     if (m_revealJoint && joint == m_joint)
         ImGui::SetScrollHereY();
     if (open && !children.empty()) {
@@ -636,6 +856,7 @@ void AnimationViewer::drawJoint()
         ImGui::End();
         return;
     }
+    drawPoser();
     if (m_joint < 0 || !m_skeleton) {
         ImGui::TextDisabled("Select a joint in the viewport or the Skeleton panel");
         ImGui::End();
@@ -643,10 +864,9 @@ void AnimationViewer::drawJoint()
     }
     const auto j = static_cast<std::size_t>(m_joint);
     const entt::registry& registry = m_scene->registry();
-    const Animator& animator = registry.get<Animator>(m_actor);
     const SkinnedMeshRenderer& skinned = registry.get<SkinnedMeshRenderer>(m_actor);
 
-    ImGui::TextUnformatted(m_skeleton->names[j].c_str());
+    ImGui::SeparatorText(m_skeleton->names[j].c_str());
     const int parent = m_skeleton->parents[j];
     ImGui::TextDisabled("Parent: %s", parent >= 0 ? m_skeleton->names[static_cast<std::size_t>(parent)].c_str() : "none");
 
@@ -660,40 +880,252 @@ void AnimationViewer::drawJoint()
     ImGui::TextDisabled("Animated: %s%s%s%s", animated & ClipData::Translation ? "position " : "",
                         animated & ClipData::Rotation ? "rotation " : "", animated & ClipData::Scale ? "scale" : "",
                         animated == 0 ? "no" : "");
+    if (m_overrides.contains(m_joint))
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "Posed");
 
-    ImGui::SeparatorText("Local");
-    JointTrs local = m_skeleton->bindLocal[j];
-    if (j < animator.pose.t.size()) {
-        local.t = animator.pose.t[j];
-        local.r = animator.pose.r[j];
-        local.s = animator.pose.s[j];
-    }
+    // Local transform; editable in Pose mode, each drag one undo step
+    JointTrs local = displayedLocal(m_joint);
     glm::vec3 euler = glm::degrees(glm::eulerAngles(local.r));
+    const float speed = 0.005f * std::max(1.0f, glm::length(m_skeleton->bindLocal[j].t));
     ImGui::PushItemWidth(-80.0f);
-    ImGui::BeginDisabled();
-    ImGui::DragFloat3("Position", &local.t.x);
-    ImGui::DragFloat3("Rotation", &euler.x);
-    ImGui::DragFloat3("Scale", &local.s.x);
+    ImGui::BeginDisabled(!m_posing);
+    bool changed = false;
+    auto track = [&](bool edited) {
+        if (ImGui::IsItemActivated() && !m_fieldStart)
+            m_fieldStart = state();
+        changed |= edited;
+        if (ImGui::IsItemDeactivated() && m_fieldStart) {
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                record("Pose " + m_skeleton->names[j], std::move(*m_fieldStart));
+            m_fieldStart.reset();
+        }
+    };
+    track(ImGui::DragFloat3("Position", &local.t.x, speed));
+    const bool rotated = ImGui::DragFloat3("Rotation", &euler.x, 0.5f);
+    track(rotated);
+    track(ImGui::DragFloat3("Scale", &local.s.x, 0.005f));
     ImGui::EndDisabled();
+    if (changed) {
+        if (rotated)
+            local.r = glm::quat(glm::radians(euler));
+        m_overrides[m_joint] = local;
+    }
     ImGui::SeparatorText("Model space");
     glm::vec3 model = j < skinned.jointModel.size() ? skinned.jointModel[j].translation() : glm::vec3(0.0f);
     ImGui::BeginDisabled();
     ImGui::DragFloat3("Position##model", &model.x);
     ImGui::EndDisabled();
     ImGui::PopItemWidth();
-    ImGui::Spacing();
-    ImGui::TextDisabled("Editing joints comes with the Poser");
     ImGui::End();
+}
+
+void AnimationViewer::drawPoser()
+{
+    // Pushed and popped on the state before the click, which toggles it
+    const bool posing = m_posing;
+    if (posing)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.42f, 0.12f, 1.0f));
+    if (ImGui::Button(posing ? "Pose Mode: On" : "Pose Mode: Off")) {
+        m_posing = !m_posing;
+        if (m_posing)
+            m_playing = false;
+    }
+    if (posing)
+        ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("Pose joints over the clip frame (or the bind pose) with the gizmo or the fields below");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_history.canUndo());
+    if (ImGui::Button("Undo")) {
+        EditContext edit{*m_scene, *m_components};
+        m_history.undo(edit);
+    }
+    ImGui::EndDisabled();
+    if (m_history.canUndo())
+        ImGui::SetItemTooltip("Undo %s (Ctrl+Z)", m_history.undoName().c_str());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_history.canRedo());
+    if (ImGui::Button("Redo")) {
+        EditContext edit{*m_scene, *m_components};
+        m_history.redo(edit);
+    }
+    ImGui::EndDisabled();
+    if (m_history.canRedo())
+        ImGui::SetItemTooltip("Redo %s (Ctrl+Y)", m_history.redoName().c_str());
+
+    if (!m_posing) {
+        if (!m_rig.limbs.empty())
+            ImGui::TextWrapped("Click a hand, foot or hips handle in the viewport to start posing");
+        drawIkPanel();
+        if (!m_status.empty())
+            ImGui::TextWrapped("%s", m_status.c_str());
+        return;
+    }
+    int base = m_baseBind ? 1 : 0;
+    ImGui::TextUnformatted("Base");
+    ImGui::SameLine();
+    ImGui::RadioButton("Clip frame", &base, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton("Bind pose", &base, 1);
+    m_baseBind = base == 1;
+
+    const bool joint = m_joint >= 0;
+    ImGui::BeginDisabled(!joint);
+    if (ImGui::SmallButton("Reset Joint")) {
+        PoserState before = state();
+        m_overrides.erase(m_joint);
+        record("Reset Joint", std::move(before));
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_overrides.empty());
+    if (ImGui::SmallButton("Reset All")) {
+        PoserState before = state();
+        m_overrides.clear();
+        record("Reset Pose", std::move(before));
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Flip Pose"))
+        flipPose();
+    ImGui::SetItemTooltip("Mirror the posed joints left to right");
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!joint);
+    if (ImGui::SmallButton("Mirror Joint"))
+        mirrorJoint();
+    ImGui::SetItemTooltip("Give the joint on the other side this joint's pose, mirrored");
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(!joint);
+    if (ImGui::SmallButton("Copy Joint"))
+        m_jointClipboard = displayedLocal(m_joint);
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_jointClipboard);
+    if (ImGui::SmallButton("Paste Joint")) {
+        PoserState before = state();
+        m_overrides[m_joint] = *m_jointClipboard;
+        record("Paste Joint", std::move(before));
+    }
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_overrides.empty());
+    if (ImGui::SmallButton("Copy Pose")) {
+        m_poseClipboard.clear();
+        for (const auto& [j, local] : m_overrides)
+            m_poseClipboard.push_back({m_skeleton->names[static_cast<std::size_t>(j)], local});
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(m_poseClipboard.empty());
+    if (ImGui::SmallButton("Paste Pose")) {
+        PoserState before = state();
+        for (const PoseJoint& p : m_poseClipboard) {
+            if (const int j = m_skeleton->findJoint(p.joint); j >= 0)
+                m_overrides[j] = p.local;
+        }
+        record("Paste Pose", std::move(before));
+    }
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(!m_authored || (m_overrides.empty() && !joint));
+    if (ImGui::Button("Key Pose"))
+        keyPose();
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(m_authored ? "Key the posed joints (or the selected one) at the playhead (K)"
+                                     : "Select or create an .anim clip to key into");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!m_authored || !joint);
+    if (ImGui::Button("Delete Key"))
+        deleteKey();
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Remove the selected joint's keys at the playhead");
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu posed", m_overrides.size());
+    drawIkPanel();
+    if (!m_status.empty())
+        ImGui::TextWrapped("%s", m_status.c_str());
+}
+
+void AnimationViewer::drawPopups()
+{
+    if (std::exchange(m_openNamePopup, false))
+        ImGui::OpenPopup("Name##poser");
+    if (std::exchange(m_openDeletePopup, false))
+        ImGui::OpenPopup("Delete##poser");
+
+    if (ImGui::BeginPopupModal("Name##poser", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const char* what = m_nameAction == NameAction::SavePose ? "Pose name" : "Clip name";
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        const bool entered = ImGui::InputText(what, m_nameBuffer, sizeof(m_nameBuffer), ImGuiInputTextFlags_EnterReturnsTrue);
+        const std::string name = m_nameBuffer;
+        const bool valid = assetops::validName(name);
+        ImGui::TextDisabled("Saved in %s", assetops::displayPath(assetops::toRef(assetFolder())).c_str());
+        ImGui::BeginDisabled(!valid);
+        const bool ok = ImGui::Button("OK", ImVec2(100.0f, 0.0f)) || (entered && valid);
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            m_nameAction = NameAction::None;
+            ImGui::CloseCurrentPopup();
+        }
+        if (ok) {
+            if (m_nameAction == NameAction::SavePose)
+                savePose(name);
+            else if (m_nameAction != NameAction::None)
+                createClip(name, m_nameAction == NameAction::DuplicateClip);
+            m_nameAction = NameAction::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+    if (ImGui::BeginPopupModal("Delete##poser", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Delete %s?", assetops::displayPath(m_deleteRef).c_str());
+        ImGui::TextDisabled("This can't be undone. Scenes using it fall back to the bind pose.");
+        if (ImGui::Button("Delete", ImVec2(100.0f, 0.0f))) {
+            deleteClip(m_deleteRef);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(100.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
 }
 
 void AnimationViewer::handleShortcuts()
 {
-    if (ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive())
+    if (ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive() ||
+        ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel) || m_gizmoDragging)
         return;
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
+        EditContext edit{*m_scene, *m_components};
+        m_history.undo(edit);
+    }
+    if (ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiKey_Y, ImGuiInputFlags_RouteGlobal) ||
+        ImGui::Shortcut(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z, ImGuiInputFlags_RouteGlobal)) {
+        EditContext edit{*m_scene, *m_components};
+        m_history.redo(edit);
+    }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
         m_closeRequested = true;
         return;
     }
+    if (m_posing && (m_view.hovered() || m_view.focused())) {
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+            m_gizmoOp = GizmoOp::Move;
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+            m_gizmoOp = GizmoOp::Rotate;
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+            m_gizmoOp = GizmoOp::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false))
+            m_gizmoLocal = !m_gizmoLocal;
+    }
+    if (m_posing && m_authored && ImGui::IsKeyPressed(ImGuiKey_K, false))
+        keyPose();
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
+        frameActor();
     if (!m_clipData)
         return;
     if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) {
@@ -709,6 +1141,651 @@ void AnimationViewer::handleShortcuts()
         stepFrame(m_in - currentFrame());
     if (ImGui::IsKeyPressed(ImGuiKey_End, false))
         stepFrame(m_out - currentFrame());
-    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
-        frameActor();
+}
+
+// POSER
+
+AnimationViewer::PoserState AnimationViewer::state() const
+{
+    return {m_overrides, m_authored ? clipRef() : std::string(), m_authored};
+}
+
+void AnimationViewer::restore(const PoserState& state)
+{
+    m_overrides = state.overrides;
+    if (!state.clip || state.clipRef.empty())
+        return;
+    const std::shared_ptr<const ClipData> baked = writeAuthored(state.clipRef, *state.clip);
+    if (clipRef() == state.clipRef) {
+        const int oldLast = lastFrame();
+        m_authored = state.clip;
+        m_clipData = baked;
+        if (m_out == oldLast || m_out > lastFrame())
+            m_out = lastFrame();
+        m_in = std::min(m_in, m_out);
+    }
+}
+
+void AnimationViewer::record(std::string name, PoserState before)
+{
+    m_status.clear();
+    m_history.push(std::make_unique<PoserCommand>(*this, std::move(name), std::move(before), state()));
+}
+
+JointTrs AnimationViewer::displayedLocal(int joint) const
+{
+    if (const auto it = m_overrides.find(joint); m_posing && it != m_overrides.end())
+        return it->second;
+    const auto j = static_cast<std::size_t>(joint);
+    const Animator& animator = m_scene->registry().get<Animator>(m_actor);
+    if (j < animator.pose.t.size())
+        return {animator.pose.t[j], animator.pose.r[j], animator.pose.s[j]};
+    return m_skeleton->bindLocal[j];
+}
+
+Affine AnimationViewer::jointModel(int joint) const
+{
+    const SkinnedMeshRenderer& skinned = m_scene->registry().get<SkinnedMeshRenderer>(m_actor);
+    const int parent = m_skeleton->parents[static_cast<std::size_t>(joint)];
+    const Affine parentModel = parent >= 0 && static_cast<std::size_t>(parent) < skinned.jointModel.size()
+                                   ? skinned.jointModel[static_cast<std::size_t>(parent)]
+                                   : Affine{};
+    const JointTrs local = displayedLocal(joint);
+    return parentModel * Affine::fromTrs(local.t, local.r, local.s);
+}
+
+// ImGuizmo on the selected joint, or on a pole handle. Moving an IK effector solves its limb;
+// anything else is forward kinematics on the joint's local transform under its parent.
+// Planted and pinned limbs are solved back to their targets after every change. The drag
+// is one undo step.
+void AnimationViewer::drawJointGizmo()
+{
+    m_gizmoHovered = false;
+    const bool usable = m_posing && m_skeleton && (m_joint >= 0 || m_poleLimb >= 0);
+    if (m_gizmoDragging && (!ImGuizmo::IsUsing() || !usable)) {
+        m_gizmoDragging = false;
+        m_planted.clear();
+        record(m_dragName, std::move(m_dragStart));
+    }
+    if (!usable)
+        return;
+
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    const glm::mat4 actorWorld = m_scene->registry().get<WorldTransform>(m_actor).matrix;
+    const bool pole = m_poleLimb >= 0;
+    const int limb = !pole && m_ik ? effectorLimb(m_joint) : -1;
+    const bool solving = limb >= 0 && m_gizmoOp == GizmoOp::Move;
+
+    glm::mat4 world = pole ? actorWorld * glm::translate(glm::mat4(1.0f), poleFor(static_cast<std::size_t>(m_poleLimb), model))
+                           : actorWorld * model[static_cast<std::size_t>(m_joint)].toMat4();
+    const glm::mat4 view = viewMatrix();
+    const glm::mat4 proj = projection();
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetDrawlist();
+    ImGuizmo::SetRect(m_view.imageX(), m_view.imageY(), m_view.imageWidth(), m_view.imageHeight());
+    const GizmoOp gizmoOp = pole ? GizmoOp::Move : m_gizmoOp;
+    const ImGuizmo::OPERATION op = gizmoOp == GizmoOp::Move     ? ImGuizmo::TRANSLATE
+                                   : gizmoOp == GizmoOp::Rotate ? ImGuizmo::ROTATE
+                                                                : ImGuizmo::SCALE;
+    const ImGuizmo::MODE mode = pole || solving                                  ? ImGuizmo::WORLD
+                                : m_gizmoLocal || gizmoOp == GizmoOp::Scale ? ImGuizmo::LOCAL
+                                                                             : ImGuizmo::WORLD;
+    const float snapValue = gizmoOp == GizmoOp::Rotate ? 15.0f : gizmoOp == GizmoOp::Scale ? 0.1f : 0.05f;
+    const float snap[3] = {snapValue, snapValue, snapValue};
+    ImGuizmo::PushID(pole ? 1 : 0);
+    const bool changed = ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), op, mode, glm::value_ptr(world),
+                                              nullptr, ImGui::GetIO().KeyCtrl ? snap : nullptr);
+    ImGuizmo::PopID();
+    m_gizmoHovered = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+
+    if (ImGuizmo::IsUsing() && !m_gizmoDragging) {
+        m_dragStart = state();
+        m_gizmoDragging = true;
+        m_playing = false;
+        if (pole) {
+            const IkLimb& l = m_rig.limbs[static_cast<std::size_t>(m_poleLimb)];
+            m_dragEffector = model[static_cast<std::size_t>(effectorJoint(l))].translation();
+            m_dragEndRotation = modelRotation(model[static_cast<std::size_t>(l.end)]);
+            m_dragName = "Move " + l.label + " Pole";
+            capturePlanted(-1, m_poleLimb);
+        } else {
+            const IkLimb* l = limb >= 0 ? &m_rig.limbs[static_cast<std::size_t>(limb)] : nullptr;
+            m_dragEndRotation = modelRotation(model[static_cast<std::size_t>(l ? l->end : m_joint)]);
+            m_dragPole = l ? poleFor(static_cast<std::size_t>(limb), model) : glm::vec3(0.0f);
+            m_dragName = solving ? "Move " + l->label : "Pose " + m_skeleton->names[static_cast<std::size_t>(m_joint)];
+            capturePlanted(m_joint, solving ? limb : -1);
+        }
+    }
+    if (!changed || !m_gizmoDragging)
+        return;
+
+    const glm::mat4 inModel = glm::inverse(actorWorld) * world;
+    if (pole) {
+        const auto l = static_cast<std::size_t>(m_poleLimb);
+        m_poles[l] = glm::vec3(inModel[3]);
+        moveEffector(l, m_dragEffector, m_dragEndRotation, *m_poles[l]);
+    } else if (solving) {
+        const auto l = static_cast<std::size_t>(limb);
+        moveEffector(l, glm::vec3(inModel[3]), m_dragEndRotation, m_poles[l] ? *m_poles[l] : m_dragPole);
+    } else {
+        const auto j = static_cast<std::size_t>(m_joint);
+        const int parent = m_skeleton->parents[j];
+        const glm::mat4 parentModel = parent >= 0 ? model[static_cast<std::size_t>(parent)].toMat4() : glm::mat4(1.0f);
+        JointTrs next = decompose(Affine::fromMat4(glm::inverse(parentModel) * inModel));
+        // Only the operated channel changes, so the others don't drift through the decomposition
+        const JointTrs previous{local.t[j], local.r[j], local.s[j]};
+        if (m_gizmoOp != GizmoOp::Move)
+            next.t = previous.t;
+        if (m_gizmoOp != GizmoOp::Rotate)
+            next.r = previous.r;
+        if (m_gizmoOp != GizmoOp::Scale)
+            next.s = previous.s;
+        m_overrides[m_joint] = next;
+    }
+    applyPlanted();
+}
+
+// IK
+
+void AnimationViewer::evaluate(Pose& local, std::vector<Affine>& model) const
+{
+    local.setBind(*m_skeleton);
+    if (m_clipData && !(m_posing && m_baseBind)) {
+        if (m_baseBindingFor != m_clipData) {
+            m_baseBinding = bindClip(*m_clipData, *m_skeleton);
+            m_baseBindingFor = m_clipData;
+        }
+        sampleClip(*m_clipData, m_baseBinding, m_time, local);
+    }
+    if (m_posing) {
+        for (const auto& [j, trs] : m_overrides) {
+            const auto i = static_cast<std::size_t>(j);
+            local.t[i] = trs.t;
+            local.r[i] = trs.r;
+            local.s[i] = trs.s;
+        }
+    }
+    model.resize(m_skeleton->jointCount());
+    localToModel(*m_skeleton, local, model);
+}
+
+int AnimationViewer::effectorLimb(int joint) const
+{
+    for (std::size_t i = 0; i < m_rig.limbs.size(); ++i) {
+        if (joint >= 0 && effectorJoint(m_rig.limbs[i]) == joint)
+            return static_cast<int>(i);
+    }
+    return -1;
+}
+
+bool AnimationViewer::limbContains(const IkLimb& limb, int joint) const
+{
+    if (joint == limb.control)
+        return true;
+    for (int j = limb.end; j >= 0; j = m_skeleton->parents[static_cast<std::size_t>(j)]) {
+        if (j == joint)
+            return true;
+        if (j == limb.root)
+            break;
+    }
+    return false;
+}
+
+// The user's pole, the rig's pole joint, or out from the knee / elbow as the pose bends it
+glm::vec3 AnimationViewer::poleFor(std::size_t limb, const std::vector<Affine>& model) const
+{
+    if (m_poles[limb])
+        return *m_poles[limb];
+    const IkLimb& l = m_rig.limbs[limb];
+    if (l.pole >= 0)
+        return model[static_cast<std::size_t>(l.pole)].translation();
+    const glm::vec3 a = model[static_cast<std::size_t>(l.root)].translation();
+    const glm::vec3 b = model[static_cast<std::size_t>(l.mid)].translation();
+    const glm::vec3 c = model[static_cast<std::size_t>(l.end)].translation();
+    const float length = glm::length(b - a) + glm::length(c - b);
+    const glm::vec3 line = glm::length(c - a) > 1e-6f ? glm::normalize(c - a) : glm::vec3(0.0f, -1.0f, 0.0f);
+    glm::vec3 out = (b - a) - line * glm::dot(b - a, line);
+    if (glm::length(out) < 1e-3f * length) {
+        // Straight: knees forward, elbows back, by the way the rig faces
+        out = l.kind == IkLimb::Kind::Leg ? m_rig.forward : -m_rig.forward;
+        out -= line * glm::dot(out, line);
+    }
+    return b + glm::normalize(out) * std::max(length, 1e-3f);
+}
+
+void AnimationViewer::setJointPosition(int joint, const glm::vec3& modelPosition)
+{
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    const auto j = static_cast<std::size_t>(joint);
+    const int parent = m_skeleton->parents[j];
+    const glm::mat4 parentModel = parent >= 0 ? model[static_cast<std::size_t>(parent)].toMat4() : glm::mat4(1.0f);
+    m_overrides[joint] = {glm::vec3(glm::inverse(parentModel) * glm::vec4(modelPosition, 1.0f)), local.r[j], local.s[j]};
+}
+
+void AnimationViewer::moveEffector(std::size_t limb, const glm::vec3& target, const glm::quat& endRotation,
+                                   const glm::vec3& pole)
+{
+    const IkLimb& l = m_rig.limbs[limb];
+    // A rig's own foot / hand control moves; the chain's end follows it
+    if (l.control >= 0)
+        setJointPosition(l.control, target);
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    const glm::vec3 chainTarget =
+        l.control >= 0 ? model[static_cast<std::size_t>(l.control)].transformPoint(l.controlOffset) : target;
+    const bool holdEnd = l.control < 0 && l.keepEndRotation;
+    solveTwoBoneIk(*m_skeleton, local, model, l.root, l.mid, l.end, chainTarget, pole, holdEnd ? &endRotation : nullptr);
+    for (const int j : {l.root, l.mid, l.end}) {
+        if (j == l.end && !holdEnd)
+            continue;
+        const auto i = static_cast<std::size_t>(j);
+        m_overrides[j] = {local.t[i], local.r[i], local.s[i]};
+    }
+}
+
+// The limbs that should hold still while joint moves: legs when Plant Feet is on, and every
+// pinned limb, unless the moving joint is part of it
+void AnimationViewer::capturePlanted(int draggedJoint, int draggedLimb)
+{
+    m_planted.clear();
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    for (std::size_t i = 0; i < m_rig.limbs.size(); ++i) {
+        const IkLimb& l = m_rig.limbs[i];
+        if (static_cast<int>(i) == draggedLimb || (draggedJoint >= 0 && limbContains(l, draggedJoint)))
+            continue;
+        const Pin& pin = m_pins[i];
+        if (!pin.on && !(m_plantFeet && l.kind == IkLimb::Kind::Leg))
+            continue;
+        m_planted.push_back({i, pin.on ? pin.target : model[static_cast<std::size_t>(effectorJoint(l))].translation(),
+                             pin.on ? pin.rotation : modelRotation(model[static_cast<std::size_t>(l.end)]), poleFor(i, model)});
+    }
+}
+
+void AnimationViewer::applyPlanted()
+{
+    for (const Planted& p : m_planted)
+        moveEffector(p.limb, p.target, p.rotation, m_poles[p.limb] ? *m_poles[p.limb] : p.pole);
+}
+
+void AnimationViewer::applyPins()
+{
+    if (!m_ik)
+        return;
+    for (std::size_t i = 0; i < m_pins.size(); ++i) {
+        if (!m_pins[i].on)
+            continue;
+        Pose local;
+        std::vector<Affine> model;
+        evaluate(local, model);
+        moveEffector(i, m_pins[i].target, m_pins[i].rotation, poleFor(i, model));
+    }
+}
+
+void AnimationViewer::setPin(std::size_t limb, bool on)
+{
+    Pin& pin = m_pins[limb];
+    pin.on = on;
+    if (!on)
+        return;
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    const IkLimb& l = m_rig.limbs[limb];
+    pin.target = model[static_cast<std::size_t>(effectorJoint(l))].translation();
+    pin.rotation = modelRotation(model[static_cast<std::size_t>(l.end)]);
+}
+
+// A diamond on every hand and foot effector, a square on the hips, a ring on every pole
+void AnimationViewer::drawIkHandles(ImDrawList* dl, const glm::mat4& viewProj, const glm::vec2& origin,
+                                    const glm::vec2& size)
+{
+    Pose local;
+    std::vector<Affine> model;
+    evaluate(local, model);
+    const glm::mat4& world = m_scene->registry().get<WorldTransform>(m_actor).matrix;
+    const Projector p{viewProj, origin, size};
+    const float r = ImGui::GetFontSize() * 0.5f;
+    auto project = [&](const glm::vec3& modelPoint, ImVec2& screen, float& depth) {
+        const glm::vec4 clip = viewProj * world * glm::vec4(modelPoint, 1.0f);
+        if (clip.w < MinW)
+            return false;
+        screen = p.toScreen(clip);
+        depth = clip.w;
+        return true;
+    };
+    const ImU32 effectorColor = IM_COL32(230, 80, 230, 255);
+    const ImU32 pinnedColor = IM_COL32(240, 70, 70, 255);
+    const ImU32 poleColor = IM_COL32(120, 255, 160, 255);
+    for (std::size_t i = 0; i < m_rig.limbs.size(); ++i) {
+        const IkLimb& l = m_rig.limbs[i];
+        ImVec2 s;
+        float depth;
+        const glm::vec3 polePoint = poleFor(i, model);
+        if (project(polePoint, s, depth)) {
+            ImVec2 knee;
+            float kneeDepth;
+            if (project(model[static_cast<std::size_t>(l.mid)].translation(), knee, kneeDepth))
+                dl->AddLine(knee, s, poleColor & IM_COL32(255, 255, 255, 110), 1.0f);
+            const bool selected = m_poleLimb == static_cast<int>(i);
+            dl->AddCircle(s, r * 0.6f, selected ? SelectedColor : poleColor, 0, selected ? 3.0f : 2.0f);
+            m_handles.push_back({HandleKind::Pole, static_cast<int>(i), glm::vec2(s.x, s.y), depth});
+        }
+        if (project(model[static_cast<std::size_t>(effectorJoint(l))].translation(), s, depth)) {
+            const bool selected = m_poleLimb < 0 && m_joint == effectorJoint(l);
+            const ImU32 color = selected ? SelectedColor : m_pins[i].on ? pinnedColor : effectorColor;
+            const ImVec2 pts[4] = {{s.x, s.y - r}, {s.x + r, s.y}, {s.x, s.y + r}, {s.x - r, s.y}};
+            dl->AddQuadFilled(pts[0], pts[1], pts[2], pts[3], color & IM_COL32(255, 255, 255, 90));
+            dl->AddQuad(pts[0], pts[1], pts[2], pts[3], color, 2.0f);
+            m_handles.push_back({HandleKind::Effector, static_cast<int>(i), glm::vec2(s.x, s.y), depth});
+        }
+    }
+    if (m_rig.hips >= 0) {
+        ImVec2 s;
+        float depth;
+        if (project(model[static_cast<std::size_t>(m_rig.hips)].translation(), s, depth)) {
+            const bool selected = m_poleLimb < 0 && m_joint == m_rig.hips;
+            const ImU32 color = selected ? SelectedColor : IM_COL32(255, 210, 60, 255);
+            dl->AddRectFilled(ImVec2(s.x - r, s.y - r), ImVec2(s.x + r, s.y + r), color & IM_COL32(255, 255, 255, 80));
+            dl->AddRect(ImVec2(s.x - r, s.y - r), ImVec2(s.x + r, s.y + r), color, 0.0f, 0, 2.0f);
+            m_handles.push_back({HandleKind::Hips, m_rig.hips, glm::vec2(s.x, s.y), depth});
+        }
+    }
+}
+
+void AnimationViewer::drawIkPanel()
+{
+    ImGui::SeparatorText("IK");
+    if (m_rig.limbs.empty()) {
+        ImGui::TextDisabled("No humanoid limbs found in this rig: forward kinematics only");
+        return;
+    }
+    ImGui::Checkbox("IK", &m_ik);
+    ImGui::SetItemTooltip("Hands and feet are effectors: drag their diamonds to solve the limb");
+    ImGui::SameLine();
+    ImGui::Checkbox("Plant feet", &m_plantFeet);
+    ImGui::SetItemTooltip("Moving or turning the body keeps the feet where they are");
+    ImGui::BeginDisabled(!m_ik);
+    for (std::size_t i = 0; i < m_rig.limbs.size(); ++i) {
+        const IkLimb& l = m_rig.limbs[i];
+        ImGui::PushID(static_cast<int>(i));
+        bool pinned = m_pins[i].on;
+        if (ImGui::Checkbox("##pin", &pinned))
+            setPin(i, pinned);
+        ImGui::SetItemTooltip("Pin: the %s stays where it is now", l.kind == IkLimb::Kind::Leg ? "foot" : "hand");
+        ImGui::SameLine();
+        if (ImGui::Selectable(l.label.c_str(), m_poleLimb < 0 && m_joint == effectorJoint(l), 0,
+                              ImVec2(ImGui::CalcTextSize("Right Arm").x + 8.0f, 0.0f))) {
+            m_joint = effectorJoint(l);
+            m_poleLimb = -1;
+            m_gizmoOp = GizmoOp::Move;
+            m_revealJoint = true;
+        }
+        ImGui::SetItemTooltip("%s > %s > %s%s%s", m_skeleton->names[static_cast<std::size_t>(l.root)].c_str(),
+                              m_skeleton->names[static_cast<std::size_t>(l.mid)].c_str(),
+                              m_skeleton->names[static_cast<std::size_t>(l.end)].c_str(),
+                              l.control >= 0 ? ", driven by " : "",
+                              l.control >= 0 ? m_skeleton->names[static_cast<std::size_t>(l.control)].c_str() : "");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Pole"))
+            m_poleLimb = static_cast<int>(i);
+        ImGui::SetItemTooltip("Select the pole: where the %s points", l.kind == IkLimb::Kind::Leg ? "knee" : "elbow");
+        if (m_poles[i]) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reset Pole"))
+                m_poles[i].reset();
+        }
+        ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+    if (m_rig.hips >= 0) {
+        if (ImGui::SmallButton("Select Hips")) {
+            m_joint = m_rig.hips;
+            m_poleLimb = -1;
+            m_gizmoOp = GizmoOp::Move;
+            m_revealJoint = true;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", m_skeleton->names[static_cast<std::size_t>(m_rig.hips)].c_str());
+    }
+}
+
+void AnimationViewer::keyPose()
+{
+    if (!m_authored) {
+        m_status = "Key Pose writes into an .anim clip: create one with New or Duplicate";
+        return;
+    }
+    std::map<int, JointTrs> keyed = m_overrides;
+    if (keyed.empty() && m_joint >= 0)
+        keyed[m_joint] = displayedLocal(m_joint);
+    if (keyed.empty())
+        return;
+    PoserState before = state();
+    const int frame = currentFrame();
+    for (const auto& [j, local] : keyed) {
+        AuthoredTrack& track = m_authored->addTrack(m_skeleton->names[static_cast<std::size_t>(j)]);
+        setKey(track.t, frame, local.t);
+        setKey(track.r, frame, local.r);
+        setKey(track.s, frame, local.s);
+        m_overrides.erase(j);  // the clip frame now holds it
+    }
+    commitAuthored();
+    record("Key Pose", std::move(before));
+    m_status = "Keyed " + std::to_string(keyed.size()) + (keyed.size() == 1 ? " joint" : " joints") + " at frame " +
+               std::to_string(frame);
+}
+
+void AnimationViewer::deleteKey()
+{
+    if (!m_authored || m_joint < 0)
+        return;
+    AuthoredTrack* track = m_authored->track(m_skeleton->names[static_cast<std::size_t>(m_joint)]);
+    if (!track)
+        return;
+    const int frame = currentFrame();
+    PoserState before = state();
+    const std::size_t count = track->t.size() + track->r.size() + track->s.size();
+    auto drop = [frame](auto& keys) { std::erase_if(keys, [frame](const auto& k) { return k.frame == frame; }); };
+    drop(track->t);
+    drop(track->r);
+    drop(track->s);
+    if (track->t.size() + track->r.size() + track->s.size() == count) {
+        m_status = "No key at frame " + std::to_string(frame);
+        return;
+    }
+    std::erase_if(m_authored->tracks, [](const AuthoredTrack& t) { return t.empty(); });
+    commitAuthored();
+    record("Delete Key", std::move(before));
+}
+
+// Every posed joint goes to its other side (itself if it has none), mirrored
+void AnimationViewer::flipPose()
+{
+    PoserState before = state();
+    std::map<int, JointTrs> flipped;
+    for (const auto& [j, local] : m_overrides) {
+        const std::string other = mirroredJointName(m_skeleton->names[static_cast<std::size_t>(j)]);
+        int k = other.empty() ? -1 : m_skeleton->findJoint(other);
+        if (k < 0)
+            k = j;
+        flipped[k] = mirrorLocal(local, m_skeleton->bindLocal[static_cast<std::size_t>(j)],
+                                 m_skeleton->bindLocal[static_cast<std::size_t>(k)]);
+    }
+    m_overrides = std::move(flipped);
+    record("Flip Pose", std::move(before));
+}
+
+void AnimationViewer::mirrorJoint()
+{
+    const std::string& name = m_skeleton->names[static_cast<std::size_t>(m_joint)];
+    const std::string other = mirroredJointName(name);
+    const int k = other.empty() ? -1 : m_skeleton->findJoint(other);
+    if (k < 0) {
+        m_status = name + " has no joint on the other side";
+        return;
+    }
+    PoserState before = state();
+    m_overrides[k] = mirrorLocal(displayedLocal(m_joint), m_skeleton->bindLocal[static_cast<std::size_t>(m_joint)],
+                                 m_skeleton->bindLocal[static_cast<std::size_t>(k)]);
+    record("Mirror " + name, std::move(before));
+}
+
+void AnimationViewer::applyPoseAsset(const PoseAsset& pose, std::string name)
+{
+    PoserState before = state();
+    m_overrides.clear();
+    std::size_t missing = 0;
+    for (const PoseJoint& joint : pose.joints) {
+        if (const int j = m_skeleton->findJoint(joint.joint); j >= 0)
+            m_overrides[j] = joint.local;
+        else
+            ++missing;
+    }
+    m_posing = true;
+    m_playing = false;
+    record("Apply Pose " + name, std::move(before));
+    if (pose.skeletonHash != m_skeletonHash)
+        m_status = "This pose was made for another skeleton; joints matched by name";
+    if (missing > 0)
+        m_status = std::to_string(missing) + " joints of the pose aren't in this skeleton";
+}
+
+void AnimationViewer::openAsset(AssetCache& assets, const std::string& ref)
+{
+    if (!isOpen())
+        return;
+    if (assetKindOf(ref) == AssetKind::Pose) {
+        std::string error;
+        const auto text = assetops::readText(assetops::fromRef(ref));
+        const std::optional<PoseAsset> pose = text ? loadPoseText(*text, &error) : std::nullopt;
+        if (pose)
+            applyPoseAsset(*pose, clipName(ref));
+        else
+            m_status = "Can't read " + assetops::displayPath(ref) + (error.empty() ? "" : ": " + error);
+        return;
+    }
+    refreshAssets();
+    const auto it = std::find(m_clips.begin(), m_clips.end(), ref);
+    if (it != m_clips.end())
+        selectClip(assets, static_cast<int>(it - m_clips.begin()));
+    else
+        m_status = assetops::displayPath(ref) + " wasn't made for this skeleton";
+}
+
+void AnimationViewer::savePose(const std::string& name)
+{
+    if (m_overrides.empty()) {
+        m_status = "Nothing is posed";
+        return;
+    }
+    PoseAsset pose{m_skeletonHash, m_model, {}};
+    for (const auto& [j, local] : m_overrides)
+        pose.joints.push_back({m_skeleton->names[static_cast<std::size_t>(j)], local});
+    const std::filesystem::path path = assetops::uniquePath(assetFolder(), name, ".pose");
+    std::string error;
+    if (!assetops::writeText(path, savePoseText(pose) + "\n", &error)) {
+        m_status = "Can't save the pose: " + error;
+        return;
+    }
+    m_status = "Saved " + assetops::displayPath(assetops::toRef(path));
+    m_assetsChanged = true;
+    refreshAssets();
+}
+
+void AnimationViewer::createClip(const std::string& name, bool duplicate)
+{
+    AuthoredClip clip;
+    if (duplicate && m_authored)
+        clip = *m_authored;
+    else if (duplicate && m_clipData)
+        clip = unbakeClip(*m_clipData, *m_skeleton, m_model);
+    else if (duplicate)
+        return;
+    clip.skeletonHash = m_skeletonHash;
+    clip.model = m_model;
+    const std::filesystem::path path = assetops::uniquePath(assetFolder(), name, ".anim");
+    const std::string ref = assetops::toRef(path);
+    if (!writeAuthored(ref, clip))
+        return;
+    m_assetsChanged = true;
+    refreshAssets();
+    if (const auto it = std::find(m_clips.begin(), m_clips.end(), ref); it != m_clips.end())
+        selectClip(*m_assets, static_cast<int>(it - m_clips.begin()));
+    m_playing = false;
+    m_status = "Created " + assetops::displayPath(ref);
+}
+
+void AnimationViewer::deleteClip(const std::string& ref)
+{
+    std::string error;
+    if (!assetops::remove(assetops::fromRef(ref), &error)) {
+        m_status = "Can't delete: " + error;
+        return;
+    }
+    if (assetKindOf(ref) == AssetKind::Animation) {
+        m_assets->setClip(ref, nullptr);
+        m_history.clear();  // its steps would write the file back
+        const bool selected = clipRef() == ref;
+        if (selected)
+            selectClip(*m_assets, m_embeddedClips > 0 ? 0 : -1);
+    }
+    m_assetsChanged = true;
+    refreshAssets();
+    m_status = "Deleted " + assetops::displayPath(ref);
+}
+
+std::shared_ptr<const ClipData> AnimationViewer::writeAuthored(const std::string& ref, const AuthoredClip& clip)
+{
+    auto baked = std::make_shared<const ClipData>(bakeClip(clip, *m_skeleton, std::filesystem::path(ref).stem().string()));
+    std::string error;
+    if (!assetops::writeText(assetops::fromRef(ref), saveAnimText(clip, *baked) + "\n", &error)) {
+        m_status = "Can't save " + assetops::displayPath(ref) + ": " + error;
+        return nullptr;
+    }
+    m_assets->setClip(ref, baked);
+    return baked;
+}
+
+void AnimationViewer::commitAuthored()
+{
+    if (!m_authored || m_clip < 0)
+        return;
+    const int oldLast = lastFrame();
+    if (std::shared_ptr<const ClipData> baked = writeAuthored(clipRef(), *m_authored))
+        m_clipData = std::move(baked);
+    if (m_out == oldLast || m_out > lastFrame())
+        m_out = lastFrame();
+    m_in = std::min(m_in, m_out);
+    m_time = std::min(m_time, frameTime(lastFrame()));
+}
+
+// .anim and .pose files made for this skeleton, anywhere in the project
+void AnimationViewer::refreshAssets()
+{
+    const std::string selected = clipRef();
+    m_clips.resize(m_embeddedClips);
+    m_poses.clear();
+    for (const AssetKind kind : {AssetKind::Animation, AssetKind::Pose}) {
+        for (const std::string& ref : assetops::findAssets(kind)) {
+            const auto text = assetops::readText(assetops::fromRef(ref));
+            const std::optional<AnimHeader> header = text ? readAnimHeader(*text) : std::nullopt;
+            if (!header || header->skeletonHash != m_skeletonHash)
+                continue;
+            (kind == AssetKind::Animation ? m_clips : m_poses).push_back(ref);
+        }
+    }
+    const auto it = std::find(m_clips.begin(), m_clips.end(), selected);
+    m_clip = it == m_clips.end() ? (selected.empty() ? m_clip : -1) : static_cast<int>(it - m_clips.begin());
+}
+
+std::string AnimationViewer::assetFolder() const
+{
+    return assetops::fromRef(m_model).parent_path().string();
 }

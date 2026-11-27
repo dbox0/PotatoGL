@@ -61,6 +61,8 @@ static ImU32 kindColor(AssetKind kind)
     case AssetKind::Model:    return IM_COL32(90, 190, 200, 255);
     case AssetKind::Script:   return IM_COL32(110, 140, 230, 255);
     case AssetKind::Shader:   return IM_COL32(220, 120, 90, 255);
+    case AssetKind::Animation: return IM_COL32(230, 150, 60, 255);
+    case AssetKind::Pose:     return IM_COL32(220, 190, 90, 255);
     default:                  return IM_COL32(130, 130, 135, 255);
     }
 }
@@ -367,6 +369,8 @@ void ProjectPanel::activate(const Item& item)
         m_events.openPrefab = item.ref;
         break;
     case AssetKind::Model:
+    case AssetKind::Animation:
+    case AssetKind::Pose:
         m_events.openAnimationViewer = item.ref;
         break;
     case AssetKind::Material:
@@ -670,6 +674,11 @@ void ProjectPanel::drawItemMenu(const Item& item)
             m_events.openAnimationViewer = item.ref;
         break;
     case AssetKind::Material:
+        break;
+    case AssetKind::Animation:
+    case AssetKind::Pose:
+        if (ImGui::MenuItem("Open in Animation Viewer"))
+            m_events.openAnimationViewer = item.ref;
         break;
     default:
         if (ImGui::MenuItem("Open"))

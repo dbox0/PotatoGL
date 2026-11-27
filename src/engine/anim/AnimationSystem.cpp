@@ -29,6 +29,10 @@ static bool tickAnimator(Animator& animator, SkinnedMeshRenderer& renderer, Asse
         return changed;
     }
 
+    if (animator.clipVersion != assets.clipVersion()) {
+        animator.clipVersion = assets.clipVersion();
+        animator.resolved = false;
+    }
     if (!animator.resolved || animator.boundTo != &skeleton) {
         if (!animator.resolved)
             animator.clipData = animator.clip.empty() ? nullptr : assets.clip(animator.clip);
@@ -39,7 +43,7 @@ static bool tickAnimator(Animator& animator, SkinnedMeshRenderer& renderer, Asse
         animator.time = 0.0f;
         animator.evaluated = false;
     }
-    if (!animator.clipData) {
+    if (!animator.clipData && animator.overrides.empty()) {
         const bool changed = renderer.posed;
         if (changed)
             restBind(renderer);
@@ -52,14 +56,25 @@ static bool tickAnimator(Animator& animator, SkinnedMeshRenderer& renderer, Asse
 
     bool advanced = false;
     const bool running = tick == AnimationTick::Play || tick == AnimationTick::Preview;
-    if (running && animator.playing && dt > 0.0f && animator.speed != 0.0f) {
+    if (running && animator.playing && animator.clipData && dt > 0.0f && animator.speed != 0.0f) {
         animator.time = advanceClipTime(animator.time, dt * animator.speed, animator.clipData->duration, animator.loop);
         advanced = true;
     }
     if (!advanced && animator.evaluated)
         return false;
 
-    sampleClip(*animator.clipData, animator.binding, animator.time, animator.pose);
+    // From the bind pose each time, so a joint whose override went away doesn't keep it
+    animator.pose.setBind(skeleton);
+    if (animator.clipData)
+        sampleClip(*animator.clipData, animator.binding, animator.time, animator.pose);
+    for (const auto& [joint, local] : animator.overrides) {
+        if (joint < 0 || static_cast<std::size_t>(joint) >= skeleton.jointCount())
+            continue;
+        const auto j = static_cast<std::size_t>(joint);
+        animator.pose.t[j] = local.t;
+        animator.pose.r[j] = local.r;
+        animator.pose.s[j] = local.s;
+    }
     renderer.jointModel.resize(skeleton.jointCount());
     localToModel(skeleton, animator.pose, renderer.jointModel);
     animator.evaluated = true;

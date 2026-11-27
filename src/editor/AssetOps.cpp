@@ -257,7 +257,8 @@ int rewriteReferences(const std::string& fromRef, const std::string& toRef)
         if (!it->is_regular_file(ec))
             continue;
         const AssetKind kind = assetKindOf(it->path().generic_string());
-        if (kind != AssetKind::Scene && kind != AssetKind::Prefab && kind != AssetKind::Material)
+        if (kind != AssetKind::Scene && kind != AssetKind::Prefab && kind != AssetKind::Material &&
+            kind != AssetKind::Animation && kind != AssetKind::Pose)
             continue;
         std::optional<std::string> text = readText(it->path());
         if (!text)

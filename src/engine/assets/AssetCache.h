@@ -28,6 +28,8 @@ private:
     Renderer* m_renderer = nullptr;
     std::unordered_map<std::string, ModelId> m_models;
     std::unordered_map<std::string, Animation> m_animations;  // by model path; skinned models only
+    std::unordered_map<std::string, std::shared_ptr<const ClipData>> m_animFiles;  // .anim; nullptr = failed
+    std::uint64_t m_clipVersion = 1;
     std::unordered_map<std::string, GLuint> m_textures;
     std::unordered_map<std::string, MaterialEntry> m_materials;
 
@@ -40,8 +42,13 @@ public:
     ModelId model(const std::string& path);
     // A skinned model's skeleton, loading the model first; nullptr if it has none
     std::shared_ptr<const SkeletonData> skeleton(const std::string& modelPath);
-    // "model#clip" for a clip embedded in a model; nullptr if there's no such clip
+    // "model#clip" for a clip embedded in a model, or an .anim file's baked clip; nullptr if
+    // there's no such clip
     std::shared_ptr<const ClipData> clip(const std::string& ref);
+    // An .anim was written (or deleted: nullptr), so the next clip() returns this
+    void setClip(const std::string& path, std::shared_ptr<const ClipData> clip);
+    // Changes whenever setClip() or a rename changes what clip() returns; Animators re-resolve then
+    std::uint64_t clipVersion() const { return m_clipVersion; }
     // References to every clip embedded in the model
     std::vector<std::string> clipRefs(const std::string& modelPath);
 

@@ -2,6 +2,7 @@
 
 #include "editor/AssetOps.h"
 
+#include "engine/anim/AnimAsset.h"
 #include "engine/app/CameraController.h"
 #include "engine/assets/AssetCache.h"
 #include "engine/core/Paths.h"
@@ -873,6 +874,23 @@ void Editor::openAnimationViewer(const OverlayContext& context, const std::strin
         setStatus("Stop playing to open the Animation Viewer");
         return;
     }
+    // An .anim or .pose opens the model it was made on, then itself
+    const AssetKind kind = assetKindOf(model);
+    if (kind == AssetKind::Animation || kind == AssetKind::Pose) {
+        const auto text = assetops::readText(assetops::fromRef(model));
+        const std::optional<AnimHeader> header = text ? readAnimHeader(*text) : std::nullopt;
+        if (!header || header->model.empty()) {
+            setStatus("Can't tell which model " + assetops::displayPath(model) + " belongs to");
+            return;
+        }
+        std::string error;
+        if (!m_viewer.open(context.assets, context.renderer, header->model, {}, {}, &error)) {
+            setStatus("Can't open the Animation Viewer: " + error);
+            return;
+        }
+        m_viewer.openAsset(context.assets, model);
+        return;
+    }
     std::string error;
     if (!m_viewer.open(context.assets, context.renderer, model, material, clip, &error))
         setStatus("Can't open the Animation Viewer: " + error);
@@ -886,6 +904,8 @@ void Editor::updateViewer(const OverlayContext& context)
     m_profilerPanel.draw(context.renderer.profiler());
     m_viewer.draw(context);
     m_dialogs.draw();
+    if (m_viewer.takeAssetsChanged())
+        m_projectPanel.refresh();
     if (m_viewer.takeCloseRequest())
         m_viewer.close();
     if (!m_viewer.isOpen())
