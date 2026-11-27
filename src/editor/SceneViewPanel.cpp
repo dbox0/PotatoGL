@@ -97,7 +97,7 @@ void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, S
                        {m_view.imageWidth(), m_view.imageHeight()}, gameAspect});
         drawList->PopClipRect();
 
-        drawToolbar();
+        drawToolbar(context);
         drawPrefabBar();
         drawGizmo(context, history, selection);
         handleHotkeys(context);
@@ -116,7 +116,7 @@ void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, S
     });
 }
 
-void SceneViewPanel::drawToolbar()
+void SceneViewPanel::drawToolbar(const OverlayContext& context)
 {
     struct Button
     {
@@ -139,6 +139,21 @@ void SceneViewPanel::drawToolbar()
     }
     if (ImGui::SmallButton(m_local ? "X Local" : "X Global"))
         m_local = !m_local;
+
+    // Edit mode only: playing always animates. Never saved, never an undo step.
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 3.0f);
+    const bool editing = context.playMode == PlayMode::Edit;
+    const bool previewing = editing && context.animationPreview;
+    if (previewing)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.45f, 0.8f, 1.0f));
+    ImGui::BeginDisabled(!editing);
+    if (ImGui::SmallButton("Preview"))
+        context.animationPreview = !context.animationPreview;
+    ImGui::EndDisabled();
+    if (previewing)
+        ImGui::PopStyleColor();
+    ImGui::SetItemTooltip(editing ? "Play Animators in Edit mode; off returns them to the bind pose"
+                                  : "Animators play while the game runs");
 }
 
 void SceneViewPanel::setPrefab(const std::string& name, bool dirty)
@@ -255,8 +270,9 @@ void SceneViewPanel::drawGizmo(const OverlayContext& context, EditHistory& histo
 {
     entt::registry& registry = context.scene.registry();
     const entt::entity active = selection.active();
+    // A bone socket's transform follows its joint
     const bool editable = m_tool != Tool::None && active != entt::null && registry.valid(active) &&
-                          registry.all_of<Transform, WorldTransform>(active);
+                          registry.all_of<Transform, WorldTransform>(active) && !registry.all_of<BoneSocket>(active);
 
     // Drag ended (or its object went away): one complete edit
     if (m_dragActive != entt::null && (!ImGuizmo::IsUsing() || !editable || active != m_dragActive))
@@ -364,7 +380,7 @@ void SceneViewPanel::render(const OverlayContext& context, Selection& selection)
         const auto e = static_cast<entt::entity>(id);
         const entt::entity hit = id != PickBuffer::NoId && registry.valid(e) ? e : entt::null;
         if (!m_dropMaterial.empty()) {
-            if (hit != entt::null && registry.all_of<MeshRenderer>(hit))
+            if (hit != entt::null && registry.any_of<MeshRenderer, SkinnedMeshRenderer>(hit))
                 m_dropTarget = hit;
             else
                 m_dropMaterial.clear();

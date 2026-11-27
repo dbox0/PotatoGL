@@ -20,6 +20,7 @@ struct OverlayContext
     CameraController& controller;
     ComponentRegistry& components;
     PlayMode& playMode;
+    bool& animationPreview;  // Animators play in Edit mode; nothing is saved or recorded
 };
 
 // Optional UI that owns the window (the editor). App works without one.

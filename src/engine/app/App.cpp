@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "engine/anim/AnimationSystem.h"
 #include "engine/core/Input.h"
 #include "engine/scene/ComponentReflection.h"
 
@@ -91,6 +92,7 @@ bool App::init(const char* title, int width, int height)
     onResize(fbWidth, fbHeight);
 
     m_playMode = m_overlay ? PlayMode::Edit : PlayMode::Play;
+    m_lastPlayMode = m_playMode;
     if (m_overlay)
         m_controller.setLookButtons(SDL_BUTTON_RMASK);  // left click belongs to picking and gizmos
     m_scene.registry().ctx().emplace<Input>();
@@ -126,6 +128,37 @@ void App::syncRenderInstances()
         }
         m_renderer->addInstance(mesh.model, world.matrix, entt::to_integral(entity), highlight, mesh.materialId);
     }
+    // updateAnimators resolved their models and skins; a model without a skin draws as a static one
+    for (auto [entity, world, skinned] : registry.view<WorldTransform, SkinnedMeshRenderer>().each()) {
+        if (skinned.model == InvalidModel)
+            continue;
+        bool highlight = false;
+        if (anySelected) {
+            for (entt::entity e = entity; e != entt::null && !highlight; e = registry.get<Relationship>(e).parent)
+                highlight = selected->contains(e);
+        }
+        if (skinned.skin != InvalidSkin)
+            m_renderer->addSkinnedInstance(skinned.skin, world.matrix, entt::to_integral(entity), highlight,
+                                           skinned.materialId);
+        else
+            m_renderer->addInstance(skinned.model, world.matrix, entt::to_integral(entity), highlight,
+                                    skinned.materialId);
+    }
+}
+
+// Edit mode only animates with Preview on; entering Play starts every Animator over
+void App::updateAnimators(float dt)
+{
+    if (m_playMode != PlayMode::Edit && m_lastPlayMode == PlayMode::Edit)
+        resetAnimation(m_scene);
+    m_lastPlayMode = m_playMode;
+    AnimationTick tick = AnimationTick::Play;
+    if (m_playMode == PlayMode::Edit)
+        tick = m_animationPreview ? AnimationTick::Preview : AnimationTick::Rest;
+    else if (m_playMode == PlayMode::Paused)
+        tick = AnimationTick::Hold;
+    GpuScope scope(m_renderer->profiler(), "Animation");
+    updateAnimation(m_scene, m_assets, *m_renderer, dt, tick);
 }
 
 // Lights point down their local -Z, like cameras
@@ -217,12 +250,15 @@ void App::run()
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
 
+        updateAnimators(dt);
         m_scene.updateWorldTransforms();
         {
             GpuScope scope(profiler, "Sync instances");
             syncRenderInstances();
             syncRenderLights();
         }
+        // Skinning runs once here, not per view
+        m_renderer->beginFrame();
         if (m_overlay && m_overlay->visible()) {
             m_overlay->renderViews(overlayContext());
             glBindFramebuffer(GL_FRAMEBUFFER, 0);

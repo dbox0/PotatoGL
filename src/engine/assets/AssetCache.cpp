@@ -11,7 +11,13 @@
 
 bool pathIsUnder(const std::string& path, const std::string& folder)
 {
-    return path.starts_with(folder) && (path.size() == folder.size() || path[folder.size()] == '/');
+    return path.starts_with(folder) &&
+           (path.size() == folder.size() || path[folder.size()] == '/' || path[folder.size()] == '#');
+}
+
+std::string clipModelPath(const std::string& ref)
+{
+    return ref.substr(0, ref.find('#'));
 }
 
 std::string rebasePath(const std::string& path, const std::string& from, const std::string& to)
@@ -53,16 +59,58 @@ ModelId AssetCache::model(const std::string& path)
     ModelId id = InvalidModel;
     if (m_renderer) {
         const bool builtin = path.starts_with(BuiltinMeshPrefix);
-        const std::optional<ModelData> data =
+        std::optional<ModelData> data =
             builtin ? makePrimitive(std::string_view(path).substr(BuiltinMeshPrefix.size()))
                     : loadModel(resourcePath(path));
         if (data)
             id = m_renderer->addModel(*data);
+        if (id != InvalidModel && data->skeleton && m_renderer->modelSkinned(id)) {
+            Animation& animation = m_animations[path];
+            animation.skeleton = std::make_shared<const SkeletonData>(std::move(*data->skeleton));
+            for (ClipData& clip : data->clips)
+                animation.clips.push_back(std::make_shared<const ClipData>(std::move(clip)));
+        }
     }
     if (id == InvalidModel)
         std::fprintf(stderr, "Failed to load model '%s'\n", path.c_str());
     m_models.emplace(path, id);
     return id;
+}
+
+std::shared_ptr<const SkeletonData> AssetCache::skeleton(const std::string& modelPath)
+{
+    model(modelPath);
+    const auto it = m_animations.find(modelPath);
+    return it == m_animations.end() ? nullptr : it->second.skeleton;
+}
+
+std::shared_ptr<const ClipData> AssetCache::clip(const std::string& ref)
+{
+    const std::size_t hash = ref.find('#');
+    if (hash == std::string::npos)
+        return nullptr;
+    const std::string path = ref.substr(0, hash);
+    model(path);
+    const auto it = m_animations.find(path);
+    if (it == m_animations.end())
+        return nullptr;
+    const std::string_view name = std::string_view(ref).substr(hash + 1);
+    for (const auto& clip : it->second.clips) {
+        if (clip->name == name)
+            return clip;
+    }
+    return nullptr;
+}
+
+std::vector<std::string> AssetCache::clipRefs(const std::string& modelPath)
+{
+    std::vector<std::string> refs;
+    model(modelPath);
+    if (const auto it = m_animations.find(modelPath); it != m_animations.end()) {
+        for (const auto& clip : it->second.clips)
+            refs.push_back(modelPath + "#" + clip->name);
+    }
+    return refs;
 }
 
 GLuint AssetCache::texture(const std::string& path)
@@ -131,6 +179,7 @@ void AssetCache::setMaterialAsset(const std::string& path, const MaterialAsset& 
 void AssetCache::rename(const std::string& from, const std::string& to)
 {
     renameKeys(m_models, from, to);
+    renameKeys(m_animations, from, to);
     renameKeys(m_textures, from, to);
     renameKeys(m_materials, from, to);
     for (auto& [path, entry] : m_materials) {

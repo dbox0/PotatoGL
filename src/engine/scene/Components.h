@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/anim/Clip.h"
+#include "engine/anim/Pose.h"
+#include "engine/anim/Skeleton.h"
 #include "engine/render/Renderer.h"
 
 #include <entt/entity/entity.hpp>
@@ -7,7 +10,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 struct Name
 {
@@ -88,8 +93,49 @@ struct SpotLight{
     float outerDeg = 30.0f;
 };
 
-struct SkinnedMeshRenderer{};
-struct Animator{};
+// ANIMATION
+// Saved fields first; the rest is runtime state, rebuilt by the AnimationSystem after load,
+// copy or undo like MeshRenderer::model
+
+// Without an Animator it shows the bind pose
+struct SkinnedMeshRenderer
+{
+    std::string mesh;
+    std::string material;
+    ModelId model = InvalidModel;
+    MaterialId materialId = InvalidMaterial;
+    SkinId skin = InvalidSkin;
+    std::shared_ptr<const SkeletonData> skeleton;
+    std::vector<Affine> jointModel;  // current pose, model space; sockets and gizmos read it
+    bool posed = false;              // jointModel isn't the bind pose
+};
+
+// Plays a clip on the SkinnedMeshRenderer of its own entity
+struct Animator
+{
+    std::string clip;  // "assets/Fox.glb#Run"
+    float speed = 1.0f;
+    bool loop = true;
+    bool playOnStart = true;
+
+    bool playing = false;  // gameplay may start and stop it
+    float time = 0.0f;
+    bool started = false;  // playOnStart was applied
+    bool resolved = false; // clip looked up since it last changed
+    bool evaluated = false;
+    std::shared_ptr<const ClipData> clipData;
+    const SkeletonData* boundTo = nullptr;
+    std::vector<std::int16_t> binding;
+    Pose pose;
+};
+
+// On a child of a skinned object: follows one of its joints. Its Transform is driven, not edited.
+struct BoneSocket
+{
+    std::string joint;
+    int jointIndex = -1;
+    const SkeletonData* resolvedFor = nullptr;
+};
 
 // Tags: empty types, EnTT stores no data for them
 struct Disabled {};  // skipped by gameplay systems and scripts

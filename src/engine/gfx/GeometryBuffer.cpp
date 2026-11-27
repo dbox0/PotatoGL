@@ -45,7 +45,7 @@ static std::uint32_t packSnorm10(float v)
     return static_cast<std::uint32_t>(i) & 0x3FFu;
 }
 
-static GpuVertex packVertex(const Vertex& v)
+GpuVertex packVertex(const Vertex& v)
 {
     GpuVertex g;
     g.position = v.position;

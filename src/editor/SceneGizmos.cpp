@@ -22,6 +22,7 @@ const ImU32 IconBack = IM_COL32(25, 25, 25, 190);
 const ImU32 IconEdge = IM_COL32(0, 0, 0, 220);
 const ImU32 IconSelected = IM_COL32(255, 110, 20, 255);
 const ImU32 CameraColor = IM_COL32(210, 210, 210, 255);
+const ImU32 BoneColor = IM_COL32(120, 220, 255, 230);
 
 struct Painter
 {
@@ -133,6 +134,21 @@ void drawFrustum(const Painter& p, const glm::mat4& world, const CameraComponent
     }
 }
 
+// A line from every joint to its parent; roots have none
+void drawSkeleton(const Painter& p, const glm::mat4& world, const SkinnedMeshRenderer& skinned)
+{
+    if (!skinned.skeleton || skinned.jointModel.size() != skinned.skeleton->jointCount())
+        return;
+    const std::vector<std::int16_t>& parents = skinned.skeleton->parents;
+    for (std::size_t j = 0; j < parents.size(); ++j) {
+        if (parents[j] < 0 || parents[static_cast<std::size_t>(parents[j])] < 0)
+            continue;  // the line from a root would run to the scene's origin
+        const glm::vec3 a(world * glm::vec4(skinned.jointModel[static_cast<std::size_t>(parents[j])].translation(), 1.0f));
+        const glm::vec3 b(world * glm::vec4(skinned.jointModel[j].translation(), 1.0f));
+        p.line(a, b, BoneColor);
+    }
+}
+
 ImU32 iconColor(const glm::vec3& color)
 {
     const float peak = std::max({color.r, color.g, color.b});
@@ -205,6 +221,8 @@ void SceneGizmos::draw(ImDrawList* drawList, const Scene& scene, const Selection
             drawSpot(painter, frame, *light);
         if (const CameraComponent* camera = registry.try_get<CameraComponent>(e))
             drawFrustum(painter, world, *camera, view.gameAspect);
+        if (const SkinnedMeshRenderer* skinned = registry.try_get<SkinnedMeshRenderer>(e))
+            drawSkeleton(painter, world, *skinned);
     }
 
     const float radius = iconRadius();

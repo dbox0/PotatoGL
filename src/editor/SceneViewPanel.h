@@ -20,7 +20,8 @@ struct OverlayContext;
 
 // Scene view: editor camera, click to select (Ctrl/Shift+click adds or removes), Unity-style
 // transform gizmo on the active object that moves the whole selection, selection outline,
-// light and camera gizmos. Q none, W move, E rotate, R scale, X local/global, hold Ctrl to snap.
+// light and camera gizmos, skeletons of selected skinned objects. Q none, W move, E rotate,
+// R scale, X local/global, hold Ctrl to snap. Preview plays Animators in Edit mode.
 // While a prefab is open it is the Prefab view: the tab says so and a bar offers Save and Back.
 class SceneViewPanel
 {
@@ -68,7 +69,7 @@ private:
     glm::mat4 m_dragActiveStart{1.0f};
     glm::vec3 m_dragActiveScale{1.0f};
 
-    void drawToolbar();
+    void drawToolbar(const OverlayContext& context);
     void drawPrefabBar();
     void acceptDrops(const OverlayContext& context, SceneActions& actions);
     // Where a ray through the screen point meets the ground (y = 0), or a point in front of the camera

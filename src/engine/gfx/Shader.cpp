@@ -53,8 +53,44 @@ Shader::~Shader()
     glDeleteProgram(m_program);
 }
 
+bool Shader::loadCompute(const std::string& path)
+{
+    m_compute = true;
+    m_vertPath = path;
+    m_fragPath.clear();
+    m_vertTime = modifiedTime(path);
+
+    std::string error;
+    const GLuint cs = compileShader(GL_COMPUTE_SHADER, path, error);
+    if (!cs) {
+        m_lastError = error;
+        std::fprintf(stderr, "%s\n", error.c_str());
+        return false;
+    }
+    GLuint program = glCreateProgram();
+    glAttachShader(program, cs);
+    glLinkProgram(program);
+    glDeleteShader(cs);
+
+    GLint ok = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        m_lastError = "Link error (" + path + "):\n" + log;
+        std::fprintf(stderr, "%s\n", m_lastError.c_str());
+        glDeleteProgram(program);
+        return false;
+    }
+    glDeleteProgram(m_program);
+    m_program = program;
+    m_lastError.clear();
+    return true;
+}
+
 bool Shader::load(const std::string& vertPath, const std::string& fragPath)
 {
+    m_compute = false;
     m_vertPath = vertPath;
     m_fragPath = fragPath;
     m_vertTime = modifiedTime(vertPath);
@@ -96,14 +132,16 @@ bool Shader::load(const std::string& vertPath, const std::string& fragPath)
 
 bool Shader::reload()
 {
-    return !m_vertPath.empty() && load(m_vertPath, m_fragPath);
+    if (m_vertPath.empty())
+        return false;
+    return m_compute ? loadCompute(m_vertPath) : load(m_vertPath, m_fragPath);
 }
 
 bool Shader::reloadIfChanged()
 {
     if (m_vertPath.empty())
         return false;
-    if (modifiedTime(m_vertPath) == m_vertTime && modifiedTime(m_fragPath) == m_fragTime)
+    if (modifiedTime(m_vertPath) == m_vertTime && (m_compute || modifiedTime(m_fragPath) == m_fragTime))
         return false;
     return reload();
 }

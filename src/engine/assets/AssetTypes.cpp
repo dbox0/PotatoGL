@@ -24,6 +24,8 @@ AssetKind assetKindOf(std::string_view path)
         return AssetKind::Texture;
     if (ext == "glb" || ext == "gltf" || ext == "fbx" || ext == "obj")
         return AssetKind::Model;
+    if (ext == "anim")
+        return AssetKind::Animation;
     if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cc" || ext == "c")
         return AssetKind::Script;
     if (ext == "vert" || ext == "frag" || ext == "glsl" || ext == "comp" || ext == "geom")
@@ -41,6 +43,7 @@ const char* assetKindName(AssetKind kind)
     case AssetKind::Material: return "Material";
     case AssetKind::Texture:  return "Texture";
     case AssetKind::Model:    return "Model";
+    case AssetKind::Animation: return "Animation Clip";
     case AssetKind::Script:   return "Script";
     case AssetKind::Shader:   return "Shader";
     case AssetKind::Other:    return "File";

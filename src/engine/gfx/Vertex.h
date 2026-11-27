@@ -19,3 +19,6 @@ struct GpuVertex
     std::uint16_t uv[2];  // location 2, GL_HALF_FLOAT
 };
 static_assert(sizeof(GpuVertex) == 20);
+
+// Normal as GL_INT_2_10_10_10_REV, uv as two halves
+GpuVertex packVertex(const Vertex& v);

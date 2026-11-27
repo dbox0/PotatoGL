@@ -9,6 +9,7 @@
 #include <utility>
 #include <vector>
 
+class AssetCache;
 class EditHistory;
 class Selection;
 struct EditContext;
@@ -79,6 +80,7 @@ private:
     std::vector<Copied> m_clipboard;
     entt::entity m_topParent = entt::null;
     std::string m_openPrefab;  // can't be instantiated inside itself
+    AssetCache* m_assets = nullptr;
 
     // requested if valid, else where top-level objects go
     entt::entity parentFor(const EditContext& context, entt::entity requested) const;
@@ -121,6 +123,9 @@ public:
     // Objects asked for at the top level go under it instead (the open prefab's root);
     // entt::null: the top level
     // openPrefab: the prefab being edited, refused as an instance inside itself
+    // Tells skinned models apart, so they get a SkinnedMeshRenderer and an Animator
+    void setAssets(AssetCache* assets) { m_assets = assets; }
+
     void setPrefabMode(entt::entity topParent, std::string openPrefab)
     {
         m_topParent = topParent;

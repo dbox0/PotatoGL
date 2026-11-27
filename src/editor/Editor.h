@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-// Dear ImGui docking editor; F1 hides it and shows the game camera fullscreen.
+// Dear ImGui docking editor
 // The only place that touches ImGui.
 class Editor final : public Overlay
 {

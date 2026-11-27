@@ -265,7 +265,8 @@ int rewriteReferences(const std::string& fromRef, const std::string& toRef)
         // JSON strings: the exact path, or a path inside the moved folder
         const bool exact = replaceAll(*text, "\"" + fromRef + "\"", "\"" + toRef + "\"");
         const bool nested = replaceAll(*text, "\"" + fromRef + "/", "\"" + toRef + "/");
-        if ((exact || nested) && writeText(it->path(), *text, nullptr))
+        const bool clips = replaceAll(*text, "\"" + fromRef + "#", "\"" + toRef + "#");  // "model#clip"
+        if ((exact || nested || clips) && writeText(it->path(), *text, nullptr))
             ++files;
     }
     return files;

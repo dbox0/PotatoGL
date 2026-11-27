@@ -28,6 +28,8 @@ private:
     std::unique_ptr<Game> m_game;
     Scene m_scene;
     PlayMode m_playMode = PlayMode::Play;
+    PlayMode m_lastPlayMode = PlayMode::Play;
+    bool m_animationPreview = false;
     int m_fbWidth = 1;
     int m_fbHeight = 1;
     bool m_running = false;
@@ -37,8 +39,9 @@ private:
     GameContext gameContext() { return {*m_renderer, m_scene, m_camera, m_components}; }
     OverlayContext overlayContext()
     {
-        return {*m_renderer, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode};
+        return {*m_renderer, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode, m_animationPreview};
     }
+    void updateAnimators(float dt);
     void syncRenderInstances();
     void syncRenderLights();
     void renderToWindow();

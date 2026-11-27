@@ -45,6 +45,7 @@ struct FieldInfo
     bool visible = true;    // shown in the inspector
     AssetKind asset = AssetKind::None;  // String fields: a reference to an asset of this kind
     bool color = false;                 // Vec3 fields: edited with a color picker
+    bool joint = false;                 // String fields: a joint name of the parent's skeleton
 };
 
 // "radiansPerSec" -> "Radians Per Sec", "MeshRenderer" -> "Mesh Renderer"
@@ -157,6 +158,11 @@ struct ComponentInfo
     ComponentInfo& color()
     {
         fields.back().color = true;
+        return *this;
+    }
+    ComponentInfo& joint()
+    {
+        fields.back().joint = true;
         return *this;
     }
 

@@ -15,6 +15,7 @@ enum class AssetKind
     Material,
     Texture,
     Model,
+    Animation,  // .anim, and "model#clip" references to clips embedded in models
     Script,
     Shader,
     Other,

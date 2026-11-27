@@ -43,7 +43,7 @@ Icon iconOf(const entt::registry& registry, entt::entity e)
         return Icon::PointLight;
     if (registry.all_of<SpotLight>(e))
         return Icon::SpotLight;
-    if (registry.all_of<MeshRenderer>(e))
+    if (registry.any_of<MeshRenderer, SkinnedMeshRenderer>(e))
         return Icon::Mesh;
     return Icon::Empty;
 }
@@ -265,7 +265,7 @@ void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e, bool inPrefab)
         }
         if (const char* asset = acceptAssetDrop({AssetKind::Model, AssetKind::Prefab}))
             m_actions->instantiate(asset, e, SceneActions::Placement::Keep);
-        if (registry.all_of<MeshRenderer>(e)) {
+        if (registry.any_of<MeshRenderer, SkinnedMeshRenderer>(e)) {
             if (const char* material = acceptAssetDrop({AssetKind::Material}))
                 m_actions->assignMaterial(e, material);
         }

@@ -64,6 +64,51 @@ void registerSceneComponents(ComponentRegistry& components)
             nullptr)
         .hidden();
 
+    components.add<SkinnedMeshRenderer>("SkinnedMeshRenderer")
+        .property(
+            "mesh", "Mesh", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const SkinnedMeshRenderer*>(c)->mesh; },
+            [](void* c, const FieldValue& v) {
+                auto* renderer = static_cast<SkinnedMeshRenderer*>(c);
+                renderer->mesh = std::get<std::string>(v);
+                renderer->model = InvalidModel;
+            })
+        .asset(AssetKind::Model)
+        .property(
+            "material", "Material", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const SkinnedMeshRenderer*>(c)->material; },
+            [](void* c, const FieldValue& v) {
+                auto* renderer = static_cast<SkinnedMeshRenderer*>(c);
+                renderer->material = std::get<std::string>(v);
+                renderer->materialId = InvalidMaterial;
+            })
+        .asset(AssetKind::Material);
+
+    components.add<Animator>("Animator")
+        .property(
+            "clip", "Clip", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const Animator*>(c)->clip; },
+            [](void* c, const FieldValue& v) {
+                auto* animator = static_cast<Animator*>(c);
+                animator->clip = std::get<std::string>(v);
+                animator->resolved = false;
+            })
+        .asset(AssetKind::Animation)
+        .field<&Animator::speed>("speed", 0.01f)
+        .field<&Animator::loop>("loop")
+        .field<&Animator::playOnStart>("playOnStart");
+
+    components.add<BoneSocket>("BoneSocket")
+        .property(
+            "joint", "Joint", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const BoneSocket*>(c)->joint; },
+            [](void* c, const FieldValue& v) {
+                auto* socket = static_cast<BoneSocket*>(c);
+                socket->joint = std::get<std::string>(v);
+                socket->resolvedFor = nullptr;
+            })
+        .joint();
+
     components.add<CameraComponent>("Camera")
         .field<&CameraComponent::fovDeg>("fovDeg", "FOV", 0.5f)
         .field<&CameraComponent::nearPlane>("nearPlane", "Near", 0.01f)

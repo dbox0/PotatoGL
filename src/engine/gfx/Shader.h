@@ -15,6 +15,7 @@ private:
     std::filesystem::file_time_type m_vertTime;
     std::filesystem::file_time_type m_fragTime;
     std::string m_lastError;
+    bool m_compute = false;  // m_vertPath is then the compute shader
 
 public:
     Shader() = default;
@@ -25,6 +26,7 @@ public:
 
     // On failure the previous program is kept and the log is in lastError()
     bool load(const std::string& vertPath, const std::string& fragPath);
+    bool loadCompute(const std::string& path);
     bool reload();
     // True only if a source file changed and the new program linked
     bool reloadIfChanged();

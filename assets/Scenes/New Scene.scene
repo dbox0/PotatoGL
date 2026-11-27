@@ -1,0 +1,42 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "uuid": "0ea168013040f0be",
+      "components": {
+        "Name": {
+          "value": "Main Camera"
+        },
+        "Transform": {
+          "position": [0.0, 2.0, 10.0],
+          "rotation": [-0.09853762, 0.0, 0.0, 0.99513334],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Camera": {
+          "fovDeg": 60.0,
+          "nearPlane": 0.1,
+          "farPlane": 100.0,
+          "orthographic": false,
+          "orthoHeight": 10.0
+        }
+      }
+    },
+    {
+      "uuid": "373d2e15ea59426b",
+      "components": {
+        "Name": {
+          "value": "Directional Light"
+        },
+        "Transform": {
+          "position": [0.0, 3.0, 0.0],
+          "rotation": [-0.4082179, -0.23456971, -0.10938165, 0.87542605],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "DirectionalLight": {
+          "color": [1.0, 1.0, 1.0],
+          "intensity": 1.0
+        }
+      }
+    }
+  ]
+}

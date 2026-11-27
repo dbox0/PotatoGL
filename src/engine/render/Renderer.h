@@ -12,6 +12,7 @@
 #include "engine/gfx/RenderTarget.h"
 #include "engine/gfx/Shader.h"
 #include "engine/gfx/ShadowMap.h"
+#include "engine/gfx/SkinnedGeometry.h"
 #include "engine/gfx/TextureArray.h"
 #include "engine/render/LightClusters.h"
 #include "engine/scene/Camera.h"
@@ -19,15 +20,21 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <string>
 #include <vector>
 
 using ModelId = std::uint32_t;
 inline constexpr ModelId InvalidModel = UINT32_MAX;
+// One skinned instance's joint palette and skinned vertices. The low 20 bits index the slot,
+// the rest is its generation, so a stale id never reaches a slot that was reused.
+using SkinId = std::uint32_t;
+inline constexpr SkinId InvalidSkin = UINT32_MAX;
 
 // Every mesh lives in one GeometryBuffer and every texture in one TextureArray,
 // so the whole scene is a single glMultiDrawElementsIndirect call with one
-// instanced command per submesh.
+// instanced command per submesh. Skinned meshes are a second one: beginFrame() skins them
+// all in one compute dispatch, and every pass draws the result.
 class Renderer
 {
 public:
@@ -52,6 +59,9 @@ public:
         std::size_t materials;
         std::size_t lights;
         std::size_t clusterRefs;  // light references across all clusters, last view rendered
+        std::size_t skins;
+        GLsizeiptr skinnedVertices;    // output vertices allocated to skins
+        GLsizeiptr skinnedThisFrame;   // vertices the last beginFrame skinned
     };
 
     // Directional light only. The map covers a sphere around the first `distance` metres of the view.
@@ -76,12 +86,34 @@ private:
     {
         MeshRange range;
         MaterialId material;
+        bool bindPose = false;  // static copy of a skinned submesh, drawn by plain instances only
+    };
+
+    struct SkinnedSubmesh
+    {
+        GLuint firstIndex;
+        GLuint indexCount;
+        GLuint vertexOffset;  // into the model's skinned vertices
+        MaterialId material;
+    };
+
+    struct Skin
+    {
+        ModelId model = InvalidModel;  // InvalidModel: free slot
+        GLuint generation = 0;
+        GLuint output = 0;     // first vertex of its output region
+        GLuint jointBase = 0;  // first joint of its palette slice
+        bool used = false;     // acquired since the last beginFrame
+        bool dirty = false;    // palette written, needs skinning
     };
 
     GpuProfiler m_profiler;
     GeometryBuffer m_geometry;
+    SkinnedGeometry m_skinned;
     IndirectBuffer m_indirect;
     IndirectBuffer m_highlightIndirect;  // highlighted instances only; they come first in each group
+    IndirectBuffer m_skinnedIndirect;    // one command per skinned instance and submesh
+    IndirectBuffer m_skinnedHighlightIndirect;
     TextureArray m_textures;
     Shader m_shader;
     Shader m_pickShader;
@@ -90,6 +122,7 @@ private:
     Shader m_outlineShader;
     Shader m_tonemapShader;
     Shader m_depthShader;
+    Shader m_skinShader;
     RenderTarget m_windowTarget;  // HDR scene for render(target = nullptr)
     ShadowMap m_shadowMap;
     LightClusters m_clusters;
@@ -125,10 +158,24 @@ private:
         std::uint32_t firstSubmesh;
         std::uint32_t submeshCount;
         Bounds bounds;
+        std::uint32_t firstSkinned = 0;
+        std::uint32_t skinnedCount = 0;
+        GLuint sourceFirst = 0;      // first source vertex in SkinnedGeometry
+        GLuint skinnedVertices = 0;
+        std::uint32_t jointCount = 0;
+        std::vector<glm::vec4> bindPalette;  // three rows per joint
     };
 
     std::vector<Submesh> m_submeshes;
+    std::vector<SkinnedSubmesh> m_skinnedSubmeshes;
     std::vector<ModelEntry> m_models;
+
+    std::vector<Skin> m_skins;
+    std::vector<std::uint32_t> m_freeSkins;
+    RangeAllocator m_paletteJoints;
+    std::vector<glm::vec4> m_palette;  // CPU staging; animators write their slice in place
+    std::vector<SkinnedGeometry::Job> m_skinJobs;
+    GLsizeiptr m_skinnedVerticesLastFrame = 0;
 
     // Instances in submission order; uploadDraws groups them by submesh into m_draws
     std::vector<std::uint32_t> m_instanceSubmesh;
@@ -137,10 +184,15 @@ private:
     std::vector<GLuint> m_groupStart;
     std::vector<GLuint> m_groupCursor;
     std::vector<GLuint> m_highlightCursor;
+    // Skinned instances, one entry per submesh; their slots follow the static ones
+    std::vector<MeshRange> m_skinnedRanges;
+    std::vector<DrawData> m_skinnedDraws;
     bool m_drawsDirty = false;
     // Swapped in by renderPreview so it doesn't disturb the scene's instances and lights
     std::vector<std::uint32_t> m_previewSubmesh;
     std::vector<DrawData> m_previewDraws;
+    std::vector<MeshRange> m_previewSkinnedRanges;
+    std::vector<DrawData> m_previewSkinnedDraws;
     std::vector<LightData> m_previewLights;
     bool m_mipsDirty = true;
 
@@ -178,7 +230,9 @@ private:
     void uploadClusters();
     void renderShadowMap(const ViewMatrices& view);
     void prepare();
-    void drawScene(const IndirectBuffer& draws) const;
+    void drawScene(bool highlightedOnly) const;
+    Skin* skinSlot(SkinId id);
+    void releaseSkin(std::uint32_t index);
 
 public:
     // Returns nullptr if the shaders fail to load
@@ -191,8 +245,9 @@ public:
 
     // Also adds the model's own textures and materials
     ModelId addModel(const ModelData& model);
-    // Model space; zero-sized for an unknown model
+    // Model space; zero-sized for an unknown model. Skinned models: bind pose.
     Bounds modelBounds(ModelId model) const;
+    bool modelSkinned(ModelId model) const { return model < m_models.size() && m_models[model].skinnedCount > 0; }
 
     // sRGB RGBA8, scaled to the texture array's layer size. Returns the layer.
     GLuint addTexture(const ImageData& image);
@@ -203,6 +258,20 @@ public:
     void addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId = PickBuffer::NoId,
                      bool highlight = false, MaterialId material = InvalidMaterial);
     void clearInstances();
+
+    // Skinned instances. acquireSkin keeps id if it is a live skin of model, else makes a new
+    // one in bind pose; true if it made one. A skin nobody acquired since the last
+    // beginFrame() is freed there, so acquire every frame while the instance exists.
+    bool acquireSkin(SkinId& id, ModelId model);
+    // The skin's palette slice to fill in place (model space, three rows per joint, joint
+    // order of the skeleton); marks it for skinning this frame. Empty for a dead id.
+    std::span<glm::vec4> writeSkinPalette(SkinId id);
+    // Draws the model's skinned submeshes as the skin left them, its static ones as usual
+    void addSkinnedInstance(SkinId skin, const glm::mat4& transform, std::uint32_t entityId = PickBuffer::NoId,
+                            bool highlight = false, MaterialId material = InvalidMaterial);
+    // Once per frame, after instances are submitted and before any view renders:
+    // frees unused skins, uploads the palette and skins every changed instance
+    void beginFrame();
 
     // Clears the directional light too
     void clearLights();
@@ -243,7 +312,7 @@ public:
     void renderMask(const glm::mat4& viewProj, const RenderTarget& target, OutlineMask& mask);
     // Draws over target within width pixels outside the mask from renderMask; color is linear
     void drawOutline(const RenderTarget& target, const OutlineMask& mask, const glm::vec4& color, int width);
-    bool hasHighlight() const { return m_highlightIndirect.size() > 0; }
+    bool hasHighlight() const { return m_highlightIndirect.size() > 0 || m_skinnedHighlightIndirect.size() > 0; }
 
     void reloadShaders();
     void pollShaderChanges();  // cheap to call every frame, checks file times twice a second

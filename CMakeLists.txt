@@ -91,6 +91,12 @@ set(WARNING_FLAGS "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,
 
 # Everything except the editor; must never link imgui
 add_library(engine STATIC
+        src/engine/anim/AnimationSystem.cpp
+        src/engine/anim/AnimationSystem.h
+        src/engine/anim/Clip.h
+        src/engine/anim/Pose.cpp
+        src/engine/anim/Pose.h
+        src/engine/anim/Skeleton.h
         src/engine/app/App.cpp
         src/engine/app/App.h
         src/engine/app/CameraController.cpp
@@ -139,6 +145,9 @@ add_library(engine STATIC
         src/engine/gfx/Shader.h
         src/engine/gfx/ShadowMap.cpp
         src/engine/gfx/ShadowMap.h
+        src/engine/gfx/RangeAllocator.h
+        src/engine/gfx/SkinnedGeometry.cpp
+        src/engine/gfx/SkinnedGeometry.h
         src/engine/gfx/TextureArray.cpp
         src/engine/gfx/TextureArray.h
         src/engine/gfx/Vertex.h

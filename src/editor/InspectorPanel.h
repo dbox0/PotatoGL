@@ -37,6 +37,10 @@ private:
     // Value when the active widget was grabbed; the edit is recorded when it's let go
     std::optional<FieldValue> m_editStart;
     EditHistory* m_history = nullptr;  // valid during draw()
+    AssetCache* m_assets = nullptr;    // valid during draw()
+    // For the component being drawn: clips embedded in its model, joints of its skeleton
+    std::vector<std::string> m_embeddedClips;
+    std::vector<std::string> m_jointNames;
 
     char m_pickerFilter[128] = {};
     std::vector<std::string> m_pickerItems;
@@ -55,8 +59,8 @@ private:
 
 public:
     // Object field and material map widget: shows the asset's name, takes drops from the
-    // Project view, and has a picker listing every asset of kind. True when value changed.
-    bool assetSlot(const char* label, AssetKind kind, std::string& value);
+    // Project view, and has a picker listing every asset of kind (and extra). True when value changed.
+    bool assetSlot(const char* label, AssetKind kind, std::string& value, const std::vector<std::string>& extra = {});
 
     // selected: the active object; selectionCount: how many are selected in all.
     // asset: the Project view's selection, shown when no object is selected.

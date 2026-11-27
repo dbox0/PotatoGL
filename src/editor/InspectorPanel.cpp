@@ -33,7 +33,8 @@ static bool containsNoCase(const std::string& text, const char* query)
     return a.find(b) != std::string::npos;
 }
 
-bool InspectorPanel::assetSlot(const char* label, AssetKind kind, std::string& value)
+bool InspectorPanel::assetSlot(const char* label, AssetKind kind, std::string& value,
+                               const std::vector<std::string>& extra)
 {
     bool changed = false;
     ImGui::PushID(label);
@@ -60,7 +61,9 @@ bool InspectorPanel::assetSlot(const char* label, AssetKind kind, std::string& v
     }
     ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
     if (ImGui::Button("o", ImVec2(pickerWidth, 0.0f))) {
-        m_pickerItems = assetops::findAssets(kind);
+        m_pickerItems = extra;
+        const std::vector<std::string> files = assetops::findAssets(kind);
+        m_pickerItems.insert(m_pickerItems.end(), files.begin(), files.end());
         m_pickerFilter[0] = '\0';
         ImGui::OpenPopup("##picker");
     }
@@ -134,8 +137,24 @@ bool InspectorPanel::drawField(const FieldInfo& field, void* data)
     case FieldType::String: {
         if (field.asset != AssetKind::None) {
             std::string v = std::get<std::string>(value);
-            changed = assetSlot(field.label.c_str(), field.asset, v);
+            changed = assetSlot(field.label.c_str(), field.asset, v,
+                                field.asset == AssetKind::Animation ? m_embeddedClips : std::vector<std::string>{});
             value = std::move(v);
+            break;
+        }
+        if (field.joint) {
+            const std::string current = std::get<std::string>(value);
+            if (ImGui::BeginCombo(field.label.c_str(), current.empty() ? "None" : current.c_str())) {
+                if (m_jointNames.empty())
+                    ImGui::TextDisabled("The parent has no skinned mesh");
+                for (const std::string& name : m_jointNames) {
+                    if (ImGui::Selectable(name.c_str(), name == current) && name != current) {
+                        value = name;
+                        changed = true;
+                    }
+                }
+                ImGui::EndCombo();
+            }
             break;
         }
         // Committed on Enter or focus loss, so e.g. a mesh path isn't loaded per keystroke.
@@ -184,6 +203,7 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
                           ThumbnailCache& thumbnails, const std::string& asset)
 {
     m_history = &history;
+    m_assets = &assets;
     entt::registry& registry = scene.registry();
     if (ImGui::Begin("Inspector")) {
         if ((selected == entt::null || !registry.valid(selected)) && !asset.empty()) {
@@ -236,6 +256,25 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
         m_pendingRemove = &info;
 
     if (open) {
+        entt::registry& registry = scene.registry();
+        // Context some fields need: the model's clips, the parent skeleton's joints
+        m_embeddedClips.clear();
+        m_jointNames.clear();
+        if (const SkinnedMeshRenderer* skinned = registry.try_get<SkinnedMeshRenderer>(e);
+            skinned && info.id == "Animator" && !skinned->mesh.empty())
+            m_embeddedClips = m_assets->clipRefs(skinned->mesh);
+        if (info.id == "BoneSocket") {
+            const entt::entity parent = registry.get<Relationship>(e).parent;
+            const SkinnedMeshRenderer* skinned = parent == entt::null ? nullptr : registry.try_get<SkinnedMeshRenderer>(parent);
+            if (skinned && !skinned->mesh.empty()) {
+                if (const auto skeleton = m_assets->skeleton(skinned->mesh))
+                    m_jointNames = skeleton->names;
+            }
+        }
+        const bool driven = info.id == "Transform" && registry.all_of<BoneSocket>(e);
+        if (driven)
+            ImGui::TextDisabled("Driven by the Bone Socket");
+        ImGui::BeginDisabled(driven);
         void* data = info.get(scene.registry(), e);
         if (!data)
             ImGui::TextDisabled("Tag");
@@ -249,7 +288,7 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 ImGui::PushID(field.key.c_str());
                 const FieldValue before = field.get(data);
                 const bool changed = drawField(field, data);
-                if (field.asset != AssetKind::None) {
+                if (field.asset != AssetKind::None || field.joint) {
                     // Drops and picks are complete edits as they happen
                     if (changed)
                         m_history->push(setFieldCommand(scene, e, info, field, before, field.get(data)));
@@ -263,6 +302,7 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 }
                 ImGui::PopID();
             }
+        ImGui::EndDisabled();
     }
     ImGui::PopID();
 }

@@ -190,6 +190,7 @@ void Editor::update(const OverlayContext& context)
     EditContext edit{context.scene, context.components};
     m_actions.setPrefabMode(prefabRoot(context.scene),
                             m_inPrefab ? assetops::toRef(context.scene.path()) : std::string());
+    m_actions.setAssets(&context.assets);
     m_actions.apply(edit, m_history, m_selection, spawnPoint(context));
     syncSelectedTag(context.scene.registry());
 }

@@ -1,5 +1,6 @@
 #include "Renderer.h"
 
+#include "engine/anim/Pose.h"
 #include "engine/core/Paths.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -23,8 +24,11 @@ static void streamBuffer(GLuint buffer, GLsizeiptr& capacity, const void* data, 
 
 Renderer::Renderer(const Config& config)
     : m_geometry(config.vertices, config.indices, config.draws),
+      m_skinned(config.vertices / 4, config.indices / 4, config.draws),
       m_indirect(config.draws),
       m_highlightIndirect(config.draws),
+      m_skinnedIndirect(config.draws),
+      m_skinnedHighlightIndirect(config.draws),
       m_textures(config.textureSize, config.textureSize, config.textureLayers),
       m_drawSsboCapacity(std::max<GLsizeiptr>(config.draws, 1))
 {
@@ -61,7 +65,8 @@ std::unique_ptr<Renderer> Renderer::create(const Config& config)
         !renderer->m_dilateShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/dilate.frag")) ||
         !renderer->m_outlineShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/outline.frag")) ||
         !renderer->m_tonemapShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/tonemap.frag")) ||
-        !renderer->m_depthShader.load(meshVert, resourcePath("shaders/depth.frag")))
+        !renderer->m_depthShader.load(meshVert, resourcePath("shaders/depth.frag")) ||
+        !renderer->m_skinShader.loadCompute(resourcePath("shaders/skin.comp")))
         return nullptr;
     renderer->onShadersLoaded();
     return renderer;
@@ -117,7 +122,9 @@ const std::string& Renderer::shaderError() const
         return m_outlineShader.lastError();
     if (!m_tonemapShader.lastError().empty())
         return m_tonemapShader.lastError();
-    return m_depthShader.lastError();
+    if (!m_depthShader.lastError().empty())
+        return m_depthShader.lastError();
+    return m_skinShader.lastError();
 }
 
 ModelId Renderer::addModel(const ModelData& model)
@@ -140,25 +147,210 @@ ModelId Renderer::addModel(const ModelData& model)
         materials.push_back(addMaterial(material));
     }
 
+    ModelEntry entry{};
+    const SkeletonData* skeleton = model.skeleton ? &*model.skeleton : nullptr;
+    if (skeleton) {
+        entry.jointCount = static_cast<std::uint32_t>(skeleton->jointCount());
+        entry.bindPalette.resize(skeleton->jointCount() * 3);
+        writePalette(*skeleton, skeleton->bindModel, entry.bindPalette);
+    }
+
     Bounds bounds{glm::vec3(std::numeric_limits<float>::max()), glm::vec3(std::numeric_limits<float>::lowest())};
-    const auto firstSubmesh = static_cast<std::uint32_t>(m_submeshes.size());
+    entry.firstSubmesh = static_cast<std::uint32_t>(m_submeshes.size());
+    entry.firstSkinned = static_cast<std::uint32_t>(m_skinnedSubmeshes.size());
+    std::vector<Vertex> skinVertices;
+    std::vector<glm::u8vec4> skinJoints, skinWeights;
     for (const MeshData& mesh : model.meshes) {
         if (mesh.indices.empty())
             continue;
-        for (const Vertex& v : mesh.vertices) {
+        const bool hasMaterial = mesh.material >= 0 && static_cast<std::size_t>(mesh.material) < materials.size();
+        const MaterialId material = hasMaterial ? materials[static_cast<std::size_t>(mesh.material)] : DefaultMaterial;
+        const bool skinned = skeleton && mesh.skinned() && mesh.joints.size() == mesh.vertices.size() &&
+                             mesh.weights.size() == mesh.vertices.size();
+
+        // Skinned meshes also get a static bind-pose copy, for plain MeshRenderers and thumbnails
+        std::vector<Vertex> bindPose;
+        if (skinned) {
+            bindPose.resize(mesh.vertices.size());
+            for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
+                glm::vec4 rows[3] = {glm::vec4(0.0f), glm::vec4(0.0f), glm::vec4(0.0f)};
+                for (int c = 0; c < 4; ++c) {
+                    const float w = static_cast<float>(mesh.weights[i][c]) / 255.0f;
+                    const std::size_t joint = std::min<std::size_t>(mesh.joints[i][c], skeleton->jointCount() - 1);
+                    for (int r = 0; r < 3; ++r)
+                        rows[r] += entry.bindPalette[joint * 3 + static_cast<std::size_t>(r)] * w;
+                }
+                const Vertex& v = mesh.vertices[i];
+                const glm::vec4 p(v.position, 1.0f);
+                const glm::vec3 n(glm::dot(glm::vec3(rows[0]), v.normal), glm::dot(glm::vec3(rows[1]), v.normal),
+                                  glm::dot(glm::vec3(rows[2]), v.normal));
+                bindPose[i] = {{glm::dot(rows[0], p), glm::dot(rows[1], p), glm::dot(rows[2], p)},
+                               glm::length(n) > 1e-8f ? glm::normalize(n) : v.normal, v.uv};
+            }
+        }
+        const std::vector<Vertex>& vertices = skinned ? bindPose : mesh.vertices;
+        for (const Vertex& v : vertices) {
             bounds.min = glm::min(bounds.min, v.position);
             bounds.max = glm::max(bounds.max, v.position);
         }
-        const MeshRange range = m_geometry.addMesh(mesh.vertices, mesh.indices);
-        const bool hasMaterial = mesh.material >= 0 && static_cast<std::size_t>(mesh.material) < materials.size();
-        m_submeshes.push_back({range, hasMaterial ? materials[static_cast<std::size_t>(mesh.material)] : DefaultMaterial});
-    }
-    const auto submeshCount = static_cast<std::uint32_t>(m_submeshes.size()) - firstSubmesh;
-    if (submeshCount == 0)
-        return InvalidModel;
+        m_submeshes.push_back({m_geometry.addMesh(vertices, mesh.indices), material, skinned});
 
-    m_models.push_back({firstSubmesh, submeshCount, bounds});
+        if (skinned) {
+            const GLuint firstIndex = m_skinned.addIndices(mesh.indices);
+            m_skinnedSubmeshes.push_back({firstIndex, static_cast<GLuint>(mesh.indices.size()),
+                                          static_cast<GLuint>(skinVertices.size()), material});
+            skinVertices.insert(skinVertices.end(), mesh.vertices.begin(), mesh.vertices.end());
+            skinJoints.insert(skinJoints.end(), mesh.joints.begin(), mesh.joints.end());
+            skinWeights.insert(skinWeights.end(), mesh.weights.begin(), mesh.weights.end());
+        }
+    }
+    entry.submeshCount = static_cast<std::uint32_t>(m_submeshes.size()) - entry.firstSubmesh;
+    entry.skinnedCount = static_cast<std::uint32_t>(m_skinnedSubmeshes.size()) - entry.firstSkinned;
+    if (entry.submeshCount == 0)
+        return InvalidModel;
+    if (entry.skinnedCount > 0) {
+        entry.sourceFirst = m_skinned.addSource(skinVertices, skinJoints, skinWeights);
+        entry.skinnedVertices = static_cast<GLuint>(skinVertices.size());
+    } else {
+        entry.bindPalette.clear();
+        entry.jointCount = 0;
+    }
+    entry.bounds = bounds;
+    m_models.push_back(std::move(entry));
     return static_cast<ModelId>(m_models.size() - 1);
+}
+
+static constexpr std::uint32_t SkinIndexBits = 20;
+static constexpr std::uint32_t SkinIndexMask = (1u << SkinIndexBits) - 1;
+
+Renderer::Skin* Renderer::skinSlot(SkinId id)
+{
+    if (id == InvalidSkin)
+        return nullptr;
+    const std::uint32_t index = id & SkinIndexMask;
+    if (index >= m_skins.size())
+        return nullptr;
+    Skin& skin = m_skins[index];
+    if (skin.model == InvalidModel || skin.generation != (id >> SkinIndexBits))
+        return nullptr;
+    return &skin;
+}
+
+void Renderer::releaseSkin(std::uint32_t index)
+{
+    Skin& skin = m_skins[index];
+    const ModelEntry& model = m_models[skin.model];
+    m_skinned.freeOutput(skin.output, model.skinnedVertices);
+    m_paletteJoints.free(skin.jointBase, model.jointCount);
+    skin.model = InvalidModel;
+    skin.generation = (skin.generation + 1) & (UINT32_MAX >> SkinIndexBits);
+    skin.dirty = false;
+    skin.used = false;
+    m_freeSkins.push_back(index);
+}
+
+bool Renderer::acquireSkin(SkinId& id, ModelId model)
+{
+    if (Skin* skin = skinSlot(id); skin && skin->model == model) {
+        skin->used = true;
+        return false;
+    }
+    id = InvalidSkin;  // a skin of another model is left to beginFrame, like any unused one
+    if (!modelSkinned(model))
+        return false;
+
+    std::uint32_t index;
+    if (!m_freeSkins.empty()) {
+        index = m_freeSkins.back();
+        m_freeSkins.pop_back();
+    } else {
+        index = static_cast<std::uint32_t>(m_skins.size());
+        if (index > SkinIndexMask)
+            return false;
+        m_skins.emplace_back();
+    }
+    const ModelEntry& entry = m_models[model];
+    Skin& skin = m_skins[index];
+    skin.model = model;
+    skin.output = m_skinned.allocateOutput(entry.skinnedVertices);
+    skin.jointBase = m_paletteJoints.allocate(entry.jointCount);
+    skin.used = true;
+    skin.dirty = true;
+    m_palette.resize(static_cast<std::size_t>(m_paletteJoints.end()) * 3);
+    std::copy(entry.bindPalette.begin(), entry.bindPalette.end(),
+              m_palette.begin() + static_cast<std::ptrdiff_t>(skin.jointBase) * 3);
+    id = index | skin.generation << SkinIndexBits;
+    return true;
+}
+
+std::span<glm::vec4> Renderer::writeSkinPalette(SkinId id)
+{
+    Skin* skin = skinSlot(id);
+    if (!skin)
+        return {};
+    skin->dirty = true;
+    return std::span<glm::vec4>(m_palette).subspan(static_cast<std::size_t>(skin->jointBase) * 3,
+                                                   static_cast<std::size_t>(m_models[skin->model].jointCount) * 3);
+}
+
+void Renderer::addSkinnedInstance(SkinId id, const glm::mat4& transform, std::uint32_t entityId, bool highlight,
+                                  MaterialId material)
+{
+    const Skin* skin = skinSlot(id);
+    if (!skin)
+        return;
+    const ModelEntry& entry = m_models[skin->model];
+    const bool overridden = material < m_materials.size();
+    DrawData draw{};
+    draw.setModel(transform);
+    draw.entityId = entityId;
+    draw.highlight = highlight ? 1u : 0u;
+    for (std::uint32_t i = 0; i < entry.submeshCount; ++i) {
+        const std::uint32_t submesh = entry.firstSubmesh + i;
+        if (m_submeshes[submesh].bindPose)
+            continue;
+        draw.material = overridden ? material : m_submeshes[submesh].material;
+        m_instanceSubmesh.push_back(submesh);
+        m_instanceDraws.push_back(draw);
+    }
+    for (std::uint32_t i = 0; i < entry.skinnedCount; ++i) {
+        const SkinnedSubmesh& submesh = m_skinnedSubmeshes[entry.firstSkinned + i];
+        draw.material = overridden ? material : submesh.material;
+        m_skinnedRanges.push_back({submesh.firstIndex, submesh.indexCount,
+                                   static_cast<GLint>(skin->output + submesh.vertexOffset)});
+        m_skinnedDraws.push_back(draw);
+    }
+    m_drawsDirty = true;
+}
+
+void Renderer::beginFrame()
+{
+    for (std::uint32_t i = 0; i < m_skins.size(); ++i) {
+        Skin& skin = m_skins[i];
+        if (skin.model == InvalidModel)
+            continue;
+        if (!skin.used)
+            releaseSkin(i);
+        else
+            skin.used = false;
+    }
+
+    m_skinJobs.clear();
+    m_skinnedVerticesLastFrame = 0;
+    for (Skin& skin : m_skins) {
+        if (skin.model == InvalidModel || !skin.dirty)
+            continue;
+        const ModelEntry& model = m_models[skin.model];
+        m_skinJobs.push_back({model.sourceFirst, skin.output, model.skinnedVertices, skin.jointBase, 0, {}});
+        m_skinnedVerticesLastFrame += model.skinnedVertices;
+        skin.dirty = false;
+    }
+    if (m_skinJobs.empty())
+        return;
+    GpuScope scope(m_profiler, "Skinning");
+    m_skinShader.use();
+    m_skinned.skin(std::span<const glm::vec4>(m_palette.data(), static_cast<std::size_t>(m_paletteJoints.end()) * 3),
+                   m_skinJobs);
 }
 
 Renderer::Bounds Renderer::modelBounds(ModelId model) const
@@ -211,6 +403,8 @@ void Renderer::clearInstances()
 {
     m_instanceSubmesh.clear();
     m_instanceDraws.clear();
+    m_skinnedRanges.clear();
+    m_skinnedDraws.clear();
     m_drawsDirty = true;
 }
 
@@ -316,7 +510,7 @@ void Renderer::renderShadowMap(const ViewMatrices& view)
     glPolygonOffset(1.5f, 2.0f);
     m_depthShader.use();
     Shader::setMat4(m_depthViewProjLocation, lightViewProj);
-    drawScene(m_indirect);
+    drawScene(false);
     glDisable(GL_POLYGON_OFFSET_FILL);
     glDisable(GL_DEPTH_CLAMP);
 }
@@ -360,8 +554,22 @@ void Renderer::uploadDraws()
     m_indirect.upload();
     m_highlightIndirect.upload();
 
-    const auto slots = static_cast<GLsizeiptr>(count);
+    // Skinned slots follow the static ones: one command each, its own output region
+    m_skinnedIndirect.clear();
+    m_skinnedHighlightIndirect.clear();
+    for (std::size_t k = 0; k < m_skinnedDraws.size(); ++k) {
+        const auto slot = static_cast<GLuint>(count + k);
+        m_skinnedIndirect.add(m_skinnedRanges[k], 1, slot);
+        if (m_skinnedDraws[k].highlight)
+            m_skinnedHighlightIndirect.add(m_skinnedRanges[k], 1, slot);
+    }
+    m_skinnedIndirect.upload();
+    m_skinnedHighlightIndirect.upload();
+    m_draws.insert(m_draws.end(), m_skinnedDraws.begin(), m_skinnedDraws.end());
+
+    const auto slots = static_cast<GLsizeiptr>(m_draws.size());
     m_geometry.reserveDraws(slots);
+    m_skinned.reserveDraws(slots);
     while (m_drawSsboCapacity < slots)
         m_drawSsboCapacity *= 2;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, m_drawSsbo);
@@ -392,11 +600,15 @@ void Renderer::prepare()
     }
 }
 
-void Renderer::drawScene(const IndirectBuffer& draws) const
+void Renderer::drawScene(bool highlightedOnly) const
 {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_drawSsbo);
     m_geometry.bind();
-    draws.draw();
+    (highlightedOnly ? m_highlightIndirect : m_indirect).draw();
+    if ((highlightedOnly ? m_skinnedHighlightIndirect : m_skinnedIndirect).size() > 0) {
+        m_skinned.bind();
+        (highlightedOnly ? m_skinnedHighlightIndirect : m_skinnedIndirect).draw();
+    }
 }
 
 // Shadow map, optional depth prepass, lit scene into the HDR buffer, then one fullscreen pass:
@@ -436,7 +648,7 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
         m_depthShader.use();
         Shader::setMat4(m_depthViewProjLocation, viewProj);
-        drawScene(m_indirect);
+        drawScene(false);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         // Same vertex shader with invariant gl_Position, so the lit pass hits the exact same depths
         glDepthFunc(GL_EQUAL);
@@ -467,7 +679,7 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_shadowMap.texture());
         m_textures.bind(0);
-        drawScene(m_indirect);
+        drawScene(false);
         glDepthFunc(GL_LESS);
         glDepthMask(GL_TRUE);
     }
@@ -505,6 +717,10 @@ void Renderer::renderPreview(ModelId model, MaterialId material, const RenderTar
     m_previewLights.clear();
     m_instanceSubmesh.swap(m_previewSubmesh);
     m_instanceDraws.swap(m_previewDraws);
+    m_previewSkinnedRanges.clear();
+    m_previewSkinnedDraws.clear();
+    m_skinnedRanges.swap(m_previewSkinnedRanges);
+    m_skinnedDraws.swap(m_previewSkinnedDraws);
     m_lights.swap(m_previewLights);
     const glm::vec3 sunDirection = m_sunDirection, sunRadiance = m_sunRadiance;
     const glm::vec3 sky = m_skyColor, ground = m_groundColor, clear = m_clearColor;
@@ -538,6 +754,8 @@ void Renderer::renderPreview(ModelId model, MaterialId material, const RenderTar
 
     m_instanceSubmesh.swap(m_previewSubmesh);
     m_instanceDraws.swap(m_previewDraws);
+    m_skinnedRanges.swap(m_previewSkinnedRanges);
+    m_skinnedDraws.swap(m_previewSkinnedDraws);
     m_lights.swap(m_previewLights);
     m_sunDirection = sunDirection;
     m_sunRadiance = sunRadiance;
@@ -559,7 +777,7 @@ void Renderer::renderIds(const glm::mat4& viewProj, const PickBuffer& target)
     target.clear();
     m_pickShader.use();
     Shader::setMat4(m_pickViewProjLocation, viewProj);
-    drawScene(m_indirect);
+    drawScene(false);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
@@ -581,7 +799,7 @@ void Renderer::renderMask(const glm::mat4& viewProj, const RenderTarget& target,
     glDepthMask(GL_FALSE);
     m_maskShader.use();
     Shader::setMat4(m_maskViewProjLocation, viewProj);
-    drawScene(m_highlightIndirect);
+    drawScene(true);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -631,6 +849,7 @@ void Renderer::reloadShaders()
     const bool outline = m_outlineShader.reload();
     const bool tonemap = m_tonemapShader.reload();
     const bool depth = m_depthShader.reload();
+    m_skinShader.reload();
     if (mesh || pick || mask || dilate || outline || tonemap || depth)
         onShadersLoaded();
 }
@@ -650,6 +869,12 @@ void Renderer::pollShaderChanges()
     const bool outline = m_outlineShader.reloadIfChanged();
     const bool tonemap = m_tonemapShader.reloadIfChanged();
     const bool depth = m_depthShader.reloadIfChanged();
+    const bool skin = m_skinShader.reloadIfChanged();
+    if (skin) {
+        for (Skin& s : m_skins)
+            s.dirty = s.model != InvalidModel;
+        std::printf("Skinning shader reloaded\n");
+    }
     if (mesh || pick || mask || dilate || outline || tonemap || depth) {
         onShadersLoaded();
         std::printf("Shaders reloaded\n");
@@ -664,7 +889,7 @@ Renderer::Stats Renderer::stats() const
     s.indices = m_geometry.indexCount();
     s.indexCapacity = m_geometry.indexCapacity();
     s.instances = static_cast<GLsizeiptr>(m_draws.size());
-    s.draws = m_indirect.size();
+    s.draws = m_indirect.size() + m_skinnedIndirect.size();
     s.drawCapacity = m_indirect.capacity();
     s.textureLayers = m_textures.layerCount();
     s.textureLayerCapacity = m_textures.layerCapacity();
@@ -673,5 +898,8 @@ Renderer::Stats Renderer::stats() const
     s.materials = m_materials.size();
     s.lights = m_lights.size();
     s.clusterRefs = m_clusters.indices().size();
+    s.skins = m_skins.size() - m_freeSkins.size();
+    s.skinnedVertices = m_skinned.outputVertexCount();
+    s.skinnedThisFrame = m_skinnedVerticesLastFrame;
     return s;
 }

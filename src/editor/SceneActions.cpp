@@ -6,6 +6,7 @@
 
 #include "editor/AssetOps.h"
 
+#include "engine/assets/AssetCache.h"
 #include "engine/assets/AssetTypes.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Prefab.h"
@@ -317,7 +318,13 @@ void SceneActions::applyInstantiate(EditContext& context, EditHistory& history, 
     switch (assetKindOf(request.asset)) {
     case AssetKind::Model:
         e = scene.createGameObject(name, parent);
-        registry.emplace<MeshRenderer>(e).mesh = request.asset;
+        if (m_assets && m_assets->skeleton(request.asset)) {
+            registry.emplace<SkinnedMeshRenderer>(e).mesh = request.asset;
+            const std::vector<std::string> clips = m_assets->clipRefs(request.asset);
+            registry.emplace<Animator>(e).clip = clips.empty() ? std::string() : clips.front();
+        } else {
+            registry.emplace<MeshRenderer>(e).mesh = request.asset;
+        }
         break;
     case AssetKind::Prefab:
         if (request.asset != m_openPrefab)
@@ -344,8 +351,12 @@ void SceneActions::applyAssignMaterial(EditContext& context, EditHistory& histor
 {
     Scene& scene = context.scene;
     const entt::entity e = request.parent;
+    if (!scene.registry().valid(e))
+        return;
     const ComponentInfo* info = context.components.find("MeshRenderer");
-    if (!info || !scene.registry().valid(e) || !info->has(scene.registry(), e))
+    if (info && !info->has(scene.registry(), e))
+        info = context.components.find("SkinnedMeshRenderer");
+    if (!info || !info->has(scene.registry(), e))
         return;
     void* data = info->get(scene.registry(), e);
     for (const FieldInfo& field : info->fields) {

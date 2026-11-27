@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "uuid": "3e35035cf87dd540",
+      "components": {
+        "Name": {
+          "value": "Cube"
+        },
+        "Transform": {
+          "position": [1.2201967, -1.3820102, -6.7015624],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "MeshRenderer": {
+          "mesh": "builtin:cube",
+          "material": "assets/New Material.mat"
+        }
+      }
+    },
+    {
+      "uuid": "611b6809d516a6e1",
+      "parent": "3e35035cf87dd540",
+      "components": {
+        "Name": {
+          "value": "Cube (1)"
+        },
+        "Transform": {
+          "position": [0.1860708, 1.1194607, 1.1920929e-05],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [0.40149727, 0.35950574, 0.38524505]
+        },
+        "MeshRenderer": {
+          "mesh": "builtin:cube",
+          "material": "assets/New Material.mat"
+        }
+      }
+    }
+  ]
+}
