@@ -3,7 +3,9 @@
 #include "engine/assets/Model.h"
 #include "engine/gfx/DrawData.h"
 #include "engine/gfx/GeometryBuffer.h"
+#include "engine/gfx/GpuProfiler.h"
 #include "engine/gfx/IndirectBuffer.h"
+#include "engine/gfx/OutlineMask.h"
 #include "engine/gfx/PickBuffer.h"
 #include "engine/gfx/RenderTarget.h"
 #include "engine/gfx/Shader.h"
@@ -52,11 +54,15 @@ private:
         GLuint textureLayer;
     };
 
+    GpuProfiler m_profiler;
     GeometryBuffer m_geometry;
     IndirectBuffer m_indirect;
+    IndirectBuffer m_highlightIndirect;  // highlighted instances only; they come first in each group
     TextureArray m_textures;
     Shader m_shader;
     Shader m_pickShader;
+    Shader m_maskShader;
+    Shader m_dilateShader;
     Shader m_outlineShader;
     GLuint m_emptyVao = 0;  // the fullscreen triangle has no attributes, but core needs a VAO
     GLuint m_drawSsbo = 0;
@@ -77,11 +83,14 @@ private:
     std::vector<DrawData> m_draws;
     std::vector<GLuint> m_groupStart;
     std::vector<GLuint> m_groupCursor;
+    std::vector<GLuint> m_highlightCursor;
     bool m_drawsDirty = false;
     bool m_mipsDirty = true;
 
     GLint m_viewProjLocation = -1;
     GLint m_pickViewProjLocation = -1;
+    GLint m_maskViewProjLocation = -1;
+    GLint m_dilateWidthLocation = -1;
     GLint m_outlineColorLocation = -1;
     GLint m_outlineWidthLocation = -1;
     std::chrono::steady_clock::time_point m_lastShaderPoll;
@@ -95,7 +104,7 @@ private:
     void onShadersLoaded();
     void uploadDraws();
     void prepare();
-    void drawScene() const;
+    void drawScene(const IndirectBuffer& draws) const;
 
 public:
     // Returns nullptr if the shaders fail to load
@@ -118,10 +127,13 @@ public:
         render(viewProj, &target, target.width(), target.height());
     }
 
-    // Entity ids and highlight flags for picking and outlines
+    // Entity ids and highlight flags for picking
     void renderIds(const glm::mat4& viewProj, const PickBuffer& target);
-    // Draws over target around every highlighted pixel of ids (same size); color is linear
-    void drawOutline(const RenderTarget& target, const PickBuffer& ids, const glm::vec4& color, int width);
+    // Visible silhouette of the highlighted instances; target must already hold this frame's depth
+    void renderMask(const glm::mat4& viewProj, const RenderTarget& target, OutlineMask& mask);
+    // Draws over target within width pixels outside the mask from renderMask; color is linear
+    void drawOutline(const RenderTarget& target, const OutlineMask& mask, const glm::vec4& color, int width);
+    bool hasHighlight() const { return m_highlightIndirect.size() > 0; }
 
     void reloadShaders();
     void pollShaderChanges();  // cheap to call every frame, checks file times twice a second
@@ -130,4 +142,5 @@ public:
     const std::string& shaderError() const;
 
     Stats stats() const;
+    GpuProfiler& profiler() { return m_profiler; }
 };

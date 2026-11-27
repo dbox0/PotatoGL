@@ -117,8 +117,12 @@ add_library(engine STATIC
         src/engine/gfx/DrawData.h
         src/engine/gfx/GeometryBuffer.cpp
         src/engine/gfx/GeometryBuffer.h
+        src/engine/gfx/GpuProfiler.cpp
+        src/engine/gfx/GpuProfiler.h
         src/engine/gfx/IndirectBuffer.cpp
         src/engine/gfx/IndirectBuffer.h
+        src/engine/gfx/OutlineMask.cpp
+        src/engine/gfx/OutlineMask.h
         src/engine/gfx/PickBuffer.cpp
         src/engine/gfx/PickBuffer.h
         src/engine/gfx/RenderTarget.cpp
@@ -175,6 +179,8 @@ if(BUILD_EDITOR)
             src/editor/Editor.h
             src/editor/InspectorPanel.cpp
             src/editor/InspectorPanel.h
+            src/editor/ProfilerPanel.cpp
+            src/editor/ProfilerPanel.h
             src/editor/SceneHierarchyPanel.cpp
             src/editor/SceneHierarchyPanel.h
             src/editor/SceneViewPanel.cpp

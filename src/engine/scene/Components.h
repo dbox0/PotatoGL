@@ -59,6 +59,27 @@ struct WorldTransform
     glm::mat4 matrix = glm::mat4(1.0f);
 };
 
+
+// LIGHTS
+struct DirectionalLight{
+    glm::vec3 color{1.0f};
+    float intensity = 1.0f;
+};
+
+struct PointLight{
+    glm::vec3 color{1.0f};
+    float intensity = 1.0f;
+    float range = 10.0f;
+};
+
+struct SpotLight{
+    glm::vec3 color{1.0f};
+    float intensity = 1.0f;
+    float range = 10.0f;
+    float innerDeg = 20.0f;
+    float outerDeg = 30.0f;
+};
+
 // Tags: empty types, EnTT stores no data for them
 struct Disabled {};  // skipped by gameplay systems and scripts
 struct Dead {};      // destroyed at the end of the gameplay step

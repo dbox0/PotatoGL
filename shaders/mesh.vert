@@ -17,6 +17,9 @@ layout(std430, binding = 0) readonly buffer Draws {
 
 uniform mat4 uViewProj;
 
+// The mask pass depth-tests against the scene pass with another program
+invariant gl_Position;
+
 out vec3 vNormal;
 out vec2 vUv;
 flat out uint vTextureLayer;

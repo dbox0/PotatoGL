@@ -1,5 +1,6 @@
 #version 430 core
-layout(binding = 0) uniform usampler2D uIds;  // .g = highlight
+layout(binding = 0) uniform sampler2D uMask;
+layout(binding = 1) uniform sampler2D uDilated;  // uMask dilated horizontally by uWidth
 uniform vec4 uColor;
 uniform int uWidth;
 out vec4 FragColor;
@@ -7,14 +8,13 @@ out vec4 FragColor;
 // Outside the highlighted silhouette, within uWidth pixels of it
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
-    ivec2 maxP = textureSize(uIds, 0) - 1;
-    if (texelFetch(uIds, p, 0).g != 0u)
+    if (texelFetch(uMask, p, 0).r != 0.0)
         discard;
-    uint near = 0u;
+    int maxY = textureSize(uDilated, 0).y - 1;
+    float near = 0.0;
     for (int y = -uWidth; y <= uWidth; ++y)
-        for (int x = -uWidth; x <= uWidth; ++x)
-            near |= texelFetch(uIds, clamp(p + ivec2(x, y), ivec2(0), maxP), 0).g;
-    if (near == 0u)
+        near = max(near, texelFetch(uDilated, ivec2(p.x, clamp(p.y + y, 0, maxY)), 0).r);
+    if (near == 0.0)
         discard;
     FragColor = uColor;
 }

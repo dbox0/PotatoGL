@@ -2,6 +2,7 @@
 
 #include "editor/ViewportPanel.h"
 
+#include "engine/gfx/OutlineMask.h"
 #include "engine/gfx/PickBuffer.h"
 #include "engine/scene/Transform.h"
 
@@ -28,6 +29,7 @@ public:
 private:
     ViewportPanel m_view{"Scene"};
     PickBuffer m_pick;
+    OutlineMask m_outline;
     Tool m_tool = Tool::Move;
     bool m_local = true;
 
@@ -44,7 +46,7 @@ private:
 
 public:
     void draw(const OverlayContext& context, EditHistory& history, entt::entity& selected);
-    // After the scene is updated: color, then ids when needed for picking or the outline
+    // After the scene is updated: color, ids on a click, then the selection outline
     void render(const OverlayContext& context, entt::entity& selected);
     void release();
 

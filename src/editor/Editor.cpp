@@ -84,6 +84,7 @@ void Editor::update(const OverlayContext& context)
     drawMenuBar(context);
     drawDockSpace();
     m_debugPanel.draw(context);
+    m_profilerPanel.draw(context.renderer.profiler());
     m_hierarchyPanel.draw(context.scene, context.components, m_history, m_selected);
     m_inspectorPanel.draw(context.scene, context.components, m_selected, m_history);
     // The tab bar only exists after the first frame, and it selects its last tab
@@ -114,6 +115,7 @@ void Editor::renderViews(const OverlayContext& context)
     m_sceneView.render(context, m_selected);
     syncSelectedTag(context.scene.registry());
     if (m_gameView.visible()) {
+        GpuScope scope(context.renderer.profiler(), "Game View");
         if (const auto viewProj = context.scene.gameCameraViewProj(m_gameView.aspect()))
             context.renderer.render(*viewProj, m_gameView.target());
     }
@@ -196,6 +198,11 @@ void Editor::drawMenuBar(const OverlayContext& context)
             undo(context);
         if (ImGui::MenuItem(redoLabel.c_str(), "Ctrl+Y", false, m_history.canRedo()))
             redo(context);
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("Debug")) {
+        ImGui::MenuItem("Profiler", nullptr, &m_profilerPanel.open());
         ImGui::EndMenu();
     }
 

@@ -171,6 +171,8 @@ void App::run()
         const Uint64 now = SDL_GetTicksNS();
         const float dt = static_cast<float>(now - lastTicks) * 1e-9f;
         lastTicks = now;
+        GpuProfiler& profiler = m_renderer->profiler();
+        profiler.beginFrame();
 
         SDL_Event event;
         while (SDL_PollEvent(&event))
@@ -189,7 +191,10 @@ void App::run()
             m_game->update(gameContext(), dt);
 
         m_scene.updateWorldTransforms();
-        syncRenderInstances();
+        {
+            GpuScope scope(profiler, "Sync instances");
+            syncRenderInstances();
+        }
         if (m_overlay && m_overlay->visible()) {
             m_overlay->renderViews(overlayContext());
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -197,10 +202,14 @@ void App::run()
             glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
         } else {
+            GpuScope scope(profiler, "Game (fullscreen)");
             renderToWindow();
         }
-        if (m_overlay)
+        if (m_overlay) {
+            GpuScope scope(profiler, "UI");
             m_overlay->render();
+        }
+        profiler.endFrame();
         SDL_GL_SwapWindow(m_window);
     }
 }

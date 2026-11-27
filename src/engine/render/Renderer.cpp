@@ -8,6 +8,7 @@
 Renderer::Renderer(const Config& config)
     : m_geometry(config.vertices, config.indices, config.draws),
       m_indirect(config.draws),
+      m_highlightIndirect(config.draws),
       m_textures(config.textureSize, config.textureSize, config.textureLayers),
       m_drawSsboCapacity(std::max<GLsizeiptr>(config.draws, 1))
 {
@@ -31,6 +32,8 @@ std::unique_ptr<Renderer> Renderer::create(const Config& config)
     const std::string meshVert = resourcePath("shaders/mesh.vert");
     if (!renderer->m_shader.load(meshVert, resourcePath("shaders/mesh.frag")) ||
         !renderer->m_pickShader.load(meshVert, resourcePath("shaders/pick.frag")) ||
+        !renderer->m_maskShader.load(meshVert, resourcePath("shaders/mask.frag")) ||
+        !renderer->m_dilateShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/dilate.frag")) ||
         !renderer->m_outlineShader.load(resourcePath("shaders/fullscreen.vert"), resourcePath("shaders/outline.frag")))
         return nullptr;
     renderer->onShadersLoaded();
@@ -49,6 +52,8 @@ void Renderer::onShadersLoaded()
     m_shader.setInt("uTextures", 0);
     m_viewProjLocation = m_shader.uniformLocation("uViewProj");
     m_pickViewProjLocation = m_pickShader.uniformLocation("uViewProj");
+    m_maskViewProjLocation = m_maskShader.uniformLocation("uViewProj");
+    m_dilateWidthLocation = m_dilateShader.uniformLocation("uWidth");
     m_outlineColorLocation = m_outlineShader.uniformLocation("uColor");
     m_outlineWidthLocation = m_outlineShader.uniformLocation("uWidth");
 }
@@ -59,6 +64,10 @@ const std::string& Renderer::shaderError() const
         return m_shader.lastError();
     if (!m_pickShader.lastError().empty())
         return m_pickShader.lastError();
+    if (!m_maskShader.lastError().empty())
+        return m_maskShader.lastError();
+    if (!m_dilateShader.lastError().empty())
+        return m_dilateShader.lastError();
     return m_outlineShader.lastError();
 }
 
@@ -112,7 +121,8 @@ void Renderer::clearInstances()
     m_drawsDirty = true;
 }
 
-// Counting sort by submesh, so each submesh's instances are contiguous and need one command
+// Counting sort by submesh, so each submesh's instances are contiguous and need one command.
+// Highlighted instances go first in their group, so the mask pass draws just them.
 void Renderer::uploadDraws()
 {
     const std::size_t submeshCount = m_submeshes.size();
@@ -124,18 +134,31 @@ void Renderer::uploadDraws()
     for (std::size_t i = 1; i <= submeshCount; ++i)
         m_groupStart[i] += m_groupStart[i - 1];
 
-    m_groupCursor.assign(m_groupStart.begin(), m_groupStart.end() - 1);
+    m_highlightCursor.assign(m_groupStart.begin(), m_groupStart.end() - 1);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (m_instanceDraws[i].highlight)
+            ++m_highlightCursor[m_instanceSubmesh[i]];
+    }
+    m_groupCursor.assign(m_highlightCursor.begin(), m_highlightCursor.end());  // first plain slot
+    std::copy(m_groupStart.begin(), m_groupStart.end() - 1, m_highlightCursor.begin());
     m_draws.resize(count);
-    for (std::size_t i = 0; i < count; ++i)
-        m_draws[m_groupCursor[m_instanceSubmesh[i]]++] = m_instanceDraws[i];
+    for (std::size_t i = 0; i < count; ++i) {
+        std::vector<GLuint>& cursor = m_instanceDraws[i].highlight ? m_highlightCursor : m_groupCursor;
+        m_draws[cursor[m_instanceSubmesh[i]]++] = m_instanceDraws[i];
+    }
 
     m_indirect.clear();
+    m_highlightIndirect.clear();
     for (std::size_t s = 0; s < submeshCount; ++s) {
         const GLuint instances = m_groupStart[s + 1] - m_groupStart[s];
         if (instances > 0)
             m_indirect.add(m_submeshes[s].range, instances, m_groupStart[s]);
+        const GLuint highlighted = m_highlightCursor[s] - m_groupStart[s];
+        if (highlighted > 0)
+            m_highlightIndirect.add(m_submeshes[s].range, highlighted, m_groupStart[s]);
     }
     m_indirect.upload();
+    m_highlightIndirect.upload();
 
     const auto slots = static_cast<GLsizeiptr>(count);
     m_geometry.reserveDraws(slots);
@@ -154,16 +177,17 @@ void Renderer::prepare()
         m_mipsDirty = false;
     }
     if (m_drawsDirty) {
+        GpuScope scope(m_profiler, "Upload draws");
         uploadDraws();
         m_drawsDirty = false;
     }
 }
 
-void Renderer::drawScene() const
+void Renderer::drawScene(const IndirectBuffer& draws) const
 {
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, m_drawSsbo);
     m_geometry.bind();
-    m_indirect.draw();
+    draws.draw();
 }
 
 void Renderer::render(const glm::mat4& viewProj, const RenderTarget* target, int width, int height)
@@ -183,7 +207,7 @@ void Renderer::render(const glm::mat4& viewProj, const RenderTarget* target, int
     m_shader.use();
     Shader::setMat4(m_viewProjLocation, viewProj);
     m_textures.bind(0);
-    drawScene();
+    drawScene(m_indirect);
     glDisable(GL_FRAMEBUFFER_SRGB);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -196,27 +220,64 @@ void Renderer::renderIds(const glm::mat4& viewProj, const PickBuffer& target)
     target.clear();
     m_pickShader.use();
     Shader::setMat4(m_pickViewProjLocation, viewProj);
-    drawScene();
+    drawScene(m_indirect);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void Renderer::drawOutline(const RenderTarget& target, const PickBuffer& ids, const glm::vec4& color, int width)
+void Renderer::renderMask(const glm::mat4& viewProj, const RenderTarget& target, OutlineMask& mask)
 {
+    prepare();
+    mask.resize(target);
+    if (!mask.valid())
+        return;
+    mask.bindMask();
+    glViewport(0, 0, mask.width(), mask.height());
+    const GLfloat zero[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    glClearBufferfv(GL_COLOR, 0, zero);
+    if (!hasHighlight()) {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    m_maskShader.use();
+    Shader::setMat4(m_maskViewProjLocation, viewProj);
+    drawScene(m_highlightIndirect);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+// Separable box dilation: a horizontal pass into the mask's second texture, then vertical onto target
+void Renderer::drawOutline(const RenderTarget& target, const OutlineMask& mask, const glm::vec4& color, int width)
+{
+    if (!hasHighlight() || !mask.valid())
+        return;
+    glDisable(GL_DEPTH_TEST);
+    glBindVertexArray(m_emptyVao);
+
+    mask.bindDilated();
+    glViewport(0, 0, mask.width(), mask.height());
+    m_dilateShader.use();
+    glUniform1i(m_dilateWidthLocation, width);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, mask.maskTexture());
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
     target.bind();
     glViewport(0, 0, target.width(), target.height());
     glEnable(GL_FRAMEBUFFER_SRGB);
-    glDisable(GL_DEPTH_TEST);
-
     m_outlineShader.use();
     glUniform4fv(m_outlineColorLocation, 1, &color.x);
     glUniform1i(m_outlineWidthLocation, width);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, ids.idTexture());
-    glBindVertexArray(m_emptyVao);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, mask.dilatedTexture());
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    glBindVertexArray(0);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_FRAMEBUFFER_SRGB);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -226,8 +287,10 @@ void Renderer::reloadShaders()
 {
     const bool mesh = m_shader.reload();
     const bool pick = m_pickShader.reload();
+    const bool mask = m_maskShader.reload();
+    const bool dilate = m_dilateShader.reload();
     const bool outline = m_outlineShader.reload();
-    if (mesh || pick || outline)
+    if (mesh || pick || mask || dilate || outline)
         onShadersLoaded();
 }
 
@@ -241,8 +304,10 @@ void Renderer::pollShaderChanges()
     m_lastShaderPoll = now;
     const bool mesh = m_shader.reloadIfChanged();
     const bool pick = m_pickShader.reloadIfChanged();
+    const bool mask = m_maskShader.reloadIfChanged();
+    const bool dilate = m_dilateShader.reloadIfChanged();
     const bool outline = m_outlineShader.reloadIfChanged();
-    if (mesh || pick || outline) {
+    if (mesh || pick || mask || dilate || outline) {
         onShadersLoaded();
         std::printf("Shaders reloaded\n");
     }

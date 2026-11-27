@@ -4,6 +4,7 @@
 #include "editor/DebugPanel.h"
 #include "editor/EditHistory.h"
 #include "editor/InspectorPanel.h"
+#include "editor/ProfilerPanel.h"
 #include "editor/SceneHierarchyPanel.h"
 #include "editor/SceneViewPanel.h"
 #include "editor/ViewportPanel.h"
@@ -24,6 +25,7 @@ private:
     DebugPanel m_debugPanel;
     SceneHierarchyPanel m_hierarchyPanel;
     InspectorPanel m_inspectorPanel;
+    ProfilerPanel m_profilerPanel;
     SceneViewPanel m_sceneView;
     ViewportPanel m_gameView{"Game"};
     bool m_selectSceneTab = false;

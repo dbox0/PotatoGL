@@ -28,6 +28,7 @@ public:
 
     // For UI that draws to a non-sRGB framebuffer (ImGui)
     GLuint displayTexture() const { return m_colorView; }
+    GLuint depthBuffer() const    { return m_depth; }
     int width() const             { return m_width; }
     int height() const            { return m_height; }
     bool valid() const            { return m_fbo != 0; }

@@ -60,5 +60,21 @@ void registerSceneComponents(ComponentRegistry& components)
         .field<&CameraComponent::orthographic>("orthographic")
         .field<&CameraComponent::orthoHeight>("orthoHeight", 0.1f);
 
+    components.add<DirectionalLight>("DirectionalLight")
+        .field<&DirectionalLight::color>("color", 0.01f)
+        .field<&DirectionalLight::intensity>("intensity", 0.01f);
+
+    components.add<PointLight>("PointLight")
+        .field<&PointLight::color>("color", 0.01f)
+        .field<&PointLight::intensity>("intensity", 0.01f)
+        .field<&PointLight::range>("range", 0.1f);
+
+    components.add<SpotLight>("SpotLight")
+        .field<&SpotLight::color>("color", 0.01f)
+        .field<&SpotLight::intensity>("intensity", 0.01f)
+        .field<&SpotLight::range>("range", 0.1f)
+        .field<&SpotLight::innerDeg>("innerDeg", "Inner Angle", 0.5f)
+        .field<&SpotLight::outerDeg>("outerDeg", "Outer Angle", 0.5f);
+
     components.add<Disabled>("Disabled");
 }

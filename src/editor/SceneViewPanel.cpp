@@ -161,29 +161,37 @@ void SceneViewPanel::render(const OverlayContext& context, entt::entity& selecte
         m_pickRequested = false;
         return;
     }
+    GpuProfiler& profiler = context.renderer.profiler();
+    GpuScope viewScope(profiler, "Scene View");
     const RenderTarget& target = m_view.target();
     Camera& camera = context.camera;
     camera.setAspect(m_view.aspect());
     const glm::mat4 viewProj = camera.getProjection() * camera.getView();
-    context.renderer.render(viewProj, target);
+    {
+        GpuScope scope(profiler, "Scene");
+        context.renderer.render(viewProj, target);
+    }
 
     const entt::registry& registry = context.scene.registry();
     const bool hasSelection = selected != entt::null && registry.valid(selected);
-    if (!hasSelection && !m_pickRequested)
-        return;
-
-    m_pick.resize(target.width(), target.height());
-    context.renderer.renderIds(viewProj, m_pick);
 
     if (m_pickRequested) {
+        GpuScope scope(profiler, "Pick IDs");
         m_pickRequested = false;
+        m_pick.resize(target.width(), target.height());
+        context.renderer.renderIds(viewProj, m_pick);
         const std::uint32_t id = m_pick.read(m_pickX, m_pickY);
         const auto e = static_cast<entt::entity>(id);
         selected = id != PickBuffer::NoId && registry.valid(e) ? e : entt::null;
     }
-    if (hasSelection) {
+    if (hasSelection && context.renderer.hasHighlight()) {
+        {
+            GpuScope scope(profiler, "Outline mask");
+            context.renderer.renderMask(viewProj, target, m_outline);
+        }
+        GpuScope scope(profiler, "Outline");
         const int width = static_cast<int>(2.0f * ImGui::GetIO().DisplayFramebufferScale.x + 0.5f);
-        context.renderer.drawOutline(target, m_pick, OutlineColor, width);
+        context.renderer.drawOutline(target, m_outline, OutlineColor, width);
     }
 }
 
@@ -191,4 +199,5 @@ void SceneViewPanel::release()
 {
     m_view.release();
     m_pick.release();
+    m_outline.release();
 }
