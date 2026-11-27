@@ -44,11 +44,13 @@ private:
         std::string name;                      // for selection-only steps
         SelectionIds selectionBefore;
         SelectionIds selectionAfter;
+        std::uint64_t id = 0;
     };
 
     std::vector<Step> m_undo;
     std::vector<Step> m_redo;
     std::size_t m_pendingSteps = 0;  // pushed since the last endFrame()
+    std::uint64_t m_nextId = 1;
 
     void pushStep(Step step);
 
@@ -66,6 +68,11 @@ public:
     std::optional<SelectionIds> undo(EditContext& context);
     std::optional<SelectionIds> redo(EditContext& context);
     void clear();
+
+    // Identifies the scene state the history is at: the newest undoable edit, 0 if none.
+    // Equal ids mean the same contents, so comparing with the id at the last save tells
+    // whether there are unsaved changes. Selection changes don't count.
+    std::uint64_t stateId() const;
 
     bool canUndo() const { return !m_undo.empty(); }
     bool canRedo() const { return !m_redo.empty(); }

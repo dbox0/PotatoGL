@@ -4,6 +4,10 @@
 #include "editor/EditHistory.h"
 #include "editor/Selection.h"
 
+#include "editor/AssetOps.h"
+
+#include "engine/assets/AssetTypes.h"
+#include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
@@ -11,6 +15,7 @@
 #include <imgui.h>
 
 #include <charconv>
+#include <filesystem>
 #include <memory>
 #include <string_view>
 #include <utility>
@@ -171,6 +176,12 @@ void SceneActions::apply(EditContext& context, EditHistory& history, Selection& 
         case Type::Delete:
             applyDelete(context, history, selection);
             break;
+        case Type::Instantiate:
+            applyInstantiate(context, history, selection, request, spawn);
+            break;
+        case Type::AssignMaterial:
+            applyAssignMaterial(context, history, request);
+            break;
         }
     }
     m_requests.clear();
@@ -189,7 +200,7 @@ void SceneActions::applyCreate(EditContext& context, EditHistory& history, Selec
     if (parent == entt::null)
         transform.setPos(spawn);
     if (info.mesh)
-        registry.emplace<MeshRenderer>(e, info.mesh);
+        registry.emplace<MeshRenderer>(e).mesh = info.mesh;
 
     // Lights and cameras look down their local -Z
     switch (request.kind) {
@@ -275,4 +286,60 @@ void SceneActions::applyDelete(EditContext& context, EditHistory& history, Selec
         commands.push_back(destroyEntityCommand(context.scene, e));
     history.execute(context, groupCommand(name, std::move(commands)));
     selection.clear();
+}
+
+void SceneActions::applyInstantiate(EditContext& context, EditHistory& history, Selection& selection,
+                                    const Request& request, const glm::vec3& spawn)
+{
+    Scene& scene = context.scene;
+    entt::registry& registry = scene.registry();
+    const entt::entity parent = request.parent != entt::null && registry.valid(request.parent) ? request.parent
+                                                                                                : entt::null;
+    const std::string name = std::filesystem::path(request.asset).stem().string();
+    entt::entity e = entt::null;
+    switch (assetKindOf(request.asset)) {
+    case AssetKind::Model:
+        e = scene.createGameObject(name, parent);
+        registry.emplace<MeshRenderer>(e).mesh = request.asset;
+        break;
+    case AssetKind::Prefab:
+        if (const auto text = assetops::readText(assetops::fromRef(request.asset)))
+            e = loadEntityTree(scene, context.components, *text, parent, SIZE_MAX, true);
+        break;
+    default:
+        break;
+    }
+    if (e == entt::null)
+        return;
+
+    Transform& transform = registry.get<Transform>(e);
+    if (request.placement == Placement::Spawn && parent == entt::null)
+        transform.setPos(spawn);
+    else if (request.placement == Placement::At)
+        transform.setPos(request.position);
+    else if (parent != entt::null)
+        transform.setPos(glm::vec3(0.0f));
+    history.push(createdEntityCommand(scene, e));
+    selection.set(e);
+}
+
+void SceneActions::applyAssignMaterial(EditContext& context, EditHistory& history, const Request& request)
+{
+    Scene& scene = context.scene;
+    const entt::entity e = request.parent;
+    const ComponentInfo* info = context.components.find("MeshRenderer");
+    if (!info || !scene.registry().valid(e) || !info->has(scene.registry(), e))
+        return;
+    void* data = info->get(scene.registry(), e);
+    for (const FieldInfo& field : info->fields) {
+        if (field.key != "material" || !field.set)
+            continue;
+        const FieldValue before = field.get(data);
+        const FieldValue after = request.asset;
+        if (before == after)
+            return;
+        field.set(data, after);
+        history.push(setFieldCommand(scene, e, *info, field, before, after));
+        return;
+    }
 }

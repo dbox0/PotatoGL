@@ -2,7 +2,7 @@
 in vec3 vWorldPos;
 in vec3 vNormal;
 in vec2 vUv;
-flat in uint vTextureLayer;
+flat in uint vMaterial;
 out vec4 FragColor;
 
 struct Light {
@@ -24,6 +24,21 @@ layout(std430, binding = 3) readonly buffer ClusterLights {
     uint clusterLights[];
 };
 
+// MaterialData.h GpuMaterial
+struct Material {
+    vec4 baseColor;
+    vec4 emission;
+    vec4 uvTransform;  // tiling xy, offset zw
+    float metallic;
+    float smoothness;
+    uint textureLayer;
+    uint pad;
+};
+
+layout(std430, binding = 4) readonly buffer Materials {
+    Material materials[];
+};
+
 const uvec3 ClusterGrid = uvec3(16, 9, 24);  // LightClusters::X, Y, Z
 
 uniform sampler2DArray uTextures;
@@ -43,15 +58,22 @@ uniform mat4 uShadowMatrix;  // world to shadow map uv + depth
 uniform float uShadowNormalOffset;
 uniform float uShadowDistance;
 
-const float Shininess = 32.0;
-const float SpecularF0 = 0.04;
+struct Surface {
+    vec3 diffuse;
+    vec3 f0;          // specular color at normal incidence
+    float shininess;
+};
 
-// Normalized Blinn-Phong: highlight energy stays constant as Shininess changes
-vec3 shade(vec3 albedo, vec3 n, vec3 v, vec3 l, vec3 radiance) {
+// Normalized Blinn-Phong: highlight energy stays constant as the shininess changes
+vec3 shade(Surface s, vec3 n, vec3 v, vec3 l, vec3 radiance) {
     float ndl = max(dot(n, l), 0.0);
     vec3 h = normalize(l + v);
-    float spec = SpecularF0 * (Shininess + 8.0) * 0.125 * pow(max(dot(n, h), 0.0), Shininess);
-    return (albedo + spec) * radiance * ndl;
+    vec3 spec = s.f0 * ((s.shininess + 8.0) * 0.125 * pow(max(dot(n, h), 0.0), s.shininess));
+    return (s.diffuse + spec) * radiance * ndl;
+}
+
+vec3 hemisphere(vec3 dir) {
+    return mix(uGroundColor, uSkyColor, dir.y * 0.5 + 0.5);
 }
 
 // Inverse square, windowed to reach exactly 0 at the range (Karis 2013)
@@ -73,14 +95,24 @@ float sunShadow(vec3 n, float depth) {
 }
 
 void main() {
-    vec3 albedo = texture(uTextures, vec3(vUv, float(vTextureLayer))).rgb;
+    Material mat = materials[vMaterial];
+    vec2 uv = vUv * mat.uvTransform.xy + mat.uvTransform.zw;
+    vec3 base = texture(uTextures, vec3(uv, float(mat.textureLayer))).rgb * mat.baseColor.rgb;
+    Surface surface;
+    surface.diffuse = base * (1.0 - mat.metallic);
+    surface.f0 = mix(vec3(0.04), base, mat.metallic);
+    surface.shininess = exp2(10.0 * mat.smoothness + 1.0);  // 2 .. 2048
+
     vec3 n = normalize(gl_FrontFacing ? vNormal : -vNormal);
     vec3 v = normalize(uEye.xyz - vWorldPos * uEye.w);
     float depth = dot(uViewDepth.xyz, vWorldPos) + uViewDepth.w;
 
-    vec3 color = albedo * mix(uGroundColor, uSkyColor, n.y * 0.5 + 0.5);
+    // Ambient: the hemisphere seen by the normal, plus its reflection for glossy surfaces
+    vec3 color = surface.diffuse * hemisphere(n) +
+                 surface.f0 * hemisphere(reflect(-v, n)) * (mat.smoothness * mat.smoothness);
+    color += mat.emission.rgb;
     float shadow = uShadows ? sunShadow(n, depth) : 1.0;
-    color += shade(albedo, n, v, uSunDirection, uSunRadiance * shadow);
+    color += shade(surface, n, v, uSunDirection, uSunRadiance * shadow);
 
     float slice = (uClusterZ.z > 0.5 ? log(max(depth, 1e-4)) : depth) * uClusterZ.x + uClusterZ.y;
     ivec3 cell = clamp(ivec3(ivec2(gl_FragCoord.xy * uClusterTile), int(floor(slice))),
@@ -97,7 +129,7 @@ void main() {
         float cone = clamp(dot(-l, light.directionSpotOffset.xyz) * light.colorSpotScale.w +
                            light.directionSpotOffset.w, 0.0, 1.0);
         float attenuation = distanceFalloff(distSq, light.positionInvRangeSq.w) * cone * cone;
-        color += shade(albedo, n, v, l, light.colorSpotScale.rgb * attenuation);
+        color += shade(surface, n, v, l, light.colorSpotScale.rgb * attenuation);
     }
 
     FragColor = vec4(color, 1.0);

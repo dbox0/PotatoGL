@@ -1,15 +1,105 @@
 #include "InspectorPanel.h"
 
+#include "editor/AssetOps.h"
+#include "editor/DragDrop.h"
 #include "editor/EditCommands.h"
+#include "editor/ProjectPanel.h"
+#include "editor/ThumbnailCache.h"
 
+#include "engine/assets/AssetCache.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/scene/Scene.h"
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdio>
+#include <filesystem>
+#include <utility>
 
-static bool drawField(const FieldInfo& field, void* data)
+namespace fs = std::filesystem;
+
+InspectorPanel::Requests InspectorPanel::takeRequests()
+{
+    return std::exchange(m_requests, {});
+}
+
+static bool containsNoCase(const std::string& text, const char* query)
+{
+    std::string a = text, b = query;
+    for (std::string* s : {&a, &b})
+        std::transform(s->begin(), s->end(), s->begin(), [](unsigned char c) { return std::tolower(c); });
+    return a.find(b) != std::string::npos;
+}
+
+bool InspectorPanel::assetSlot(const char* label, AssetKind kind, std::string& value)
+{
+    bool changed = false;
+    ImGui::PushID(label);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float pickerWidth = ImGui::GetFrameHeight();
+    const float width = std::max(ImGui::CalcItemWidth() - pickerWidth - style.ItemInnerSpacing.x, 20.0f);
+
+    const std::string shown = value.empty() ? std::string("None (") + assetKindName(kind) + ")"
+                                            : fs::path(value).filename().string();
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_FrameBg]);
+    if (ImGui::Button((shown + "##slot").c_str(), ImVec2(width, 0.0f)) && !value.empty())
+        m_requests.ping = value;
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    if (!value.empty())
+        ImGui::SetItemTooltip("%s\nClick to show it in the Project view", assetops::displayPath(value).c_str());
+    if (ImGui::BeginDragDropTarget()) {
+        if (const char* ref = acceptAssetDrop({kind})) {
+            value = ref;
+            changed = true;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    if (ImGui::Button("o", ImVec2(pickerWidth, 0.0f))) {
+        m_pickerItems = assetops::findAssets(kind);
+        m_pickerFilter[0] = '\0';
+        ImGui::OpenPopup("##picker");
+    }
+    ImGui::SetItemTooltip("Select %s", assetKindName(kind));
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(label);
+
+    if (ImGui::BeginPopup("##picker")) {
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(320.0f);
+        ImGui::InputTextWithHint("##filter", "Search", m_pickerFilter, sizeof(m_pickerFilter));
+        if (ImGui::BeginChild("##items", ImVec2(320.0f, 240.0f))) {
+            if (ImGui::Selectable("None", value.empty())) {
+                changed = !value.empty();
+                value.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            for (const std::string& item : m_pickerItems) {
+                const std::string name = assetops::displayPath(item);
+                if (m_pickerFilter[0] && !containsNoCase(name, m_pickerFilter))
+                    continue;
+                if (ImGui::Selectable(name.c_str(), item == value)) {
+                    changed = item != value;
+                    value = item;
+                    ImGui::CloseCurrentPopup();
+                }
+            }
+            if (m_pickerItems.empty())
+                ImGui::TextDisabled("No %s assets in the project", assetKindName(kind));
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
+bool InspectorPanel::drawField(const FieldInfo& field, void* data)
 {
     FieldValue value = field.get(data);
     bool changed = false;
@@ -36,11 +126,18 @@ static bool drawField(const FieldInfo& field, void* data)
     }
     case FieldType::Vec3: {
         glm::vec3 v = std::get<glm::vec3>(value);
-        changed = ImGui::DragFloat3(field.label.c_str(), &v.x, field.speed);
+        changed = field.color ? ImGui::ColorEdit3(field.label.c_str(), &v.x, ImGuiColorEditFlags_Float)
+                              : ImGui::DragFloat3(field.label.c_str(), &v.x, field.speed);
         value = v;
         break;
     }
     case FieldType::String: {
+        if (field.asset != AssetKind::None) {
+            std::string v = std::get<std::string>(value);
+            changed = assetSlot(field.label.c_str(), field.asset, v);
+            value = std::move(v);
+            break;
+        }
         // Committed on Enter or focus loss, so e.g. a mesh path isn't loaded per keystroke.
         // Only one text field is active at a time; it edits s_editBuffer.
         static char s_editBuffer[256];
@@ -83,12 +180,15 @@ static bool drawField(const FieldInfo& field, void* data)
 }
 
 void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, entt::entity selected,
-                          EditHistory& history, std::size_t selectionCount)
+                          EditHistory& history, std::size_t selectionCount, AssetCache& assets,
+                          ThumbnailCache& thumbnails, const std::string& asset)
 {
     m_history = &history;
     entt::registry& registry = scene.registry();
     if (ImGui::Begin("Inspector")) {
-        if (selected == entt::null || !registry.valid(selected)) {
+        if ((selected == entt::null || !registry.valid(selected)) && !asset.empty()) {
+            drawAsset(asset, assets, thumbnails);
+        } else if (selected == entt::null || !registry.valid(selected)) {
             ImGui::TextDisabled("Nothing selected");
         } else {
             ImGui::TextDisabled("Entity %u", static_cast<unsigned>(entt::to_integral(selected)));
@@ -113,6 +213,7 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
         }
     }
     ImGui::End();
+    saveMaterial(assets);
 
     if (selected != entt::null && registry.valid(selected)) {
         EditContext context{scene, components};
@@ -147,8 +248,12 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 // Own ID scope: a field may share its label with the header ("Name")
                 ImGui::PushID(field.key.c_str());
                 const FieldValue before = field.get(data);
-                drawField(field, data);
-                if (ImGui::IsItemActivated())
+                const bool changed = drawField(field, data);
+                if (field.asset != AssetKind::None) {
+                    // Drops and picks are complete edits as they happen
+                    if (changed)
+                        m_history->push(setFieldCommand(scene, e, info, field, before, field.get(data)));
+                } else if (ImGui::IsItemActivated())
                     m_editStart = before;
                 if (ImGui::IsItemDeactivated() && m_editStart) {
                     const FieldValue after = field.get(data);
@@ -181,4 +286,132 @@ void InspectorPanel::drawAddMenu(const char* button, bool scripts, const Compone
             ImGui::TextDisabled("Nothing to add");
         ImGui::EndPopup();
     }
+}
+
+// Thumbnail or a plain frame, size x size
+static void drawPreview(ThumbnailCache& thumbnails, const std::string& ref, AssetKind kind, float size)
+{
+    std::error_code ec;
+    const auto stamp = fs::last_write_time(assetops::fromRef(ref), ec);
+    const ThumbnailCache::Image image = thumbnails.get(ref, kind, stamp);
+    if (!image) {
+        ImGui::Dummy(ImVec2(size, size));
+        return;
+    }
+    const float scale = size / static_cast<float>(std::max(image.width, image.height));
+    const ImVec2 extent(static_cast<float>(image.width) * scale, static_cast<float>(image.height) * scale);
+    const auto texture = static_cast<ImTextureID>(image.texture);
+    if (image.flipY)
+        ImGui::Image(texture, extent, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+    else
+        ImGui::Image(texture, extent);
+}
+
+void InspectorPanel::drawAsset(const std::string& ref, AssetCache& assets, ThumbnailCache& thumbnails)
+{
+    const fs::path file = assetops::fromRef(ref);
+    const AssetKind kind = assetops::kindOf(file);
+    std::error_code ec;
+    if (!fs::exists(file, ec)) {
+        ImGui::TextDisabled("Nothing selected");
+        return;
+    }
+
+    const std::string name = ref == std::string(AssetsFolder) ? std::string("Assets") : file.filename().string();
+    ImGui::TextUnformatted(name.c_str());
+    ImGui::TextDisabled("%s  -  %s", assetKindName(kind), assetops::displayPath(ref).c_str());
+    ImGui::Separator();
+
+    const float previewSize = std::min(ImGui::GetContentRegionAvail().x, 256.0f);
+    switch (kind) {
+    case AssetKind::Material:
+        drawMaterial(ref, assets, thumbnails);
+        break;
+    case AssetKind::Texture: {
+        drawPreview(thumbnails, ref, kind, previewSize);
+        std::error_code stampError;
+        const ThumbnailCache::Image image = thumbnails.get(ref, kind, fs::last_write_time(file, stampError));
+        if (image)
+            ImGui::Text("%d x %d", image.sourceWidth, image.sourceHeight);
+        ImGui::TextDisabled("Imported as sRGB color, scaled to the texture array's layer size");
+        break;
+    }
+    case AssetKind::Model:
+    case AssetKind::Prefab:
+        if (kind == AssetKind::Model)
+            drawPreview(thumbnails, ref, kind, previewSize);
+        if (ImGui::Button("Add to Scene", ImVec2(-1.0f, 0.0f)))
+            m_requests.instantiate = ref;
+        ImGui::TextDisabled("Or drag it into the Scene view or the Hierarchy");
+        break;
+    case AssetKind::Scene:
+        if (ImGui::Button("Open Scene", ImVec2(-1.0f, 0.0f)))
+            m_requests.openScene = ref;
+        break;
+    case AssetKind::Folder:
+        break;
+    default: {
+        if (ImGui::Button("Open", ImVec2(-1.0f, 0.0f)))
+            openExternally(file);
+        if (m_textRef != ref) {
+            m_textRef = ref;
+            m_text = assetops::readText(file, 32 * 1024).value_or("");
+            if (m_text.find('\0') != std::string::npos)
+                m_text = "(binary file)";
+        }
+        if (ImGui::BeginChild("##text", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders,
+                              ImGuiWindowFlags_HorizontalScrollbar))
+            ImGui::TextUnformatted(m_text.c_str(), m_text.c_str() + m_text.size());
+        ImGui::EndChild();
+        break;
+    }
+    }
+}
+
+void InspectorPanel::drawMaterial(const std::string& ref, AssetCache& assets, ThumbnailCache& thumbnails)
+{
+    const MaterialAsset* current = assets.materialAsset(ref);
+    if (!current) {
+        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "Can't read this material");
+        return;
+    }
+    MaterialAsset m = *current;
+    bool changed = false;
+
+    ImGui::PushItemWidth(-110.0f);
+    ImGui::TextDisabled("Shader: Lit");
+    ImGui::SeparatorText("Surface");
+    changed |= assetSlot("Base Map", AssetKind::Texture, m.baseMap);
+    changed |= ImGui::ColorEdit3("Base Color", &m.baseColor.x);
+    changed |= ImGui::SliderFloat("Metallic", &m.metallic, 0.0f, 1.0f);
+    changed |= ImGui::SliderFloat("Smoothness", &m.smoothness, 0.0f, 1.0f);
+    changed |= ImGui::DragFloat2("Tiling", &m.tiling.x, 0.01f);
+    changed |= ImGui::DragFloat2("Offset", &m.offset.x, 0.01f);
+    ImGui::SeparatorText("Emission");
+    changed |= ImGui::ColorEdit3("Emission Color", &m.emission.x);
+    changed |= ImGui::DragFloat("Intensity", &m.emissionIntensity, 0.02f, 0.0f, 100.0f);
+    ImGui::PopItemWidth();
+
+    if (changed && m != *current) {
+        assets.setMaterialAsset(ref, m);
+        thumbnails.invalidate(ref);
+        if (!m_unsavedMaterial.empty() && m_unsavedMaterial != ref)
+            saveMaterial(assets);
+        m_unsavedMaterial = ref;
+    }
+
+    ImGui::SeparatorText("Preview");
+    drawPreview(thumbnails, ref, AssetKind::Material, std::min(ImGui::GetContentRegionAvail().x, 256.0f));
+}
+
+// Live edits go to the renderer at once; the file is written when the drag or pick ends
+void InspectorPanel::saveMaterial(AssetCache& assets)
+{
+    if (m_unsavedMaterial.empty() || ImGui::IsAnyItemActive())
+        return;
+    const std::string ref = std::exchange(m_unsavedMaterial, {});
+    const MaterialAsset* material = assets.materialAsset(ref);
+    std::string error;
+    if (material && !saveMaterialFile(assetops::fromRef(ref).string(), *material, &error))
+        m_requests.errors.push_back("Can't save material: " + error);
 }

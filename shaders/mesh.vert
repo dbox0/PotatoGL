@@ -6,7 +6,7 @@ layout(location = 3) in uint aDrawId;
 
 struct DrawData {
     vec4 rows[3];  // top three rows of the affine model matrix
-    uint textureLayer;
+    uint material;
     uint entityId;
     uint highlight;
 };
@@ -23,7 +23,7 @@ invariant gl_Position;
 out vec3 vWorldPos;
 out vec3 vNormal;
 out vec2 vUv;
-flat out uint vTextureLayer;
+flat out uint vMaterial;
 flat out uvec2 vEntity;  // entityId, highlight
 
 void main() {
@@ -38,7 +38,7 @@ void main() {
     vec3 worldPos = model * vec4(aPos, 1.0);
     vWorldPos = worldPos;
     vUv = aUv;
-    vTextureLayer = draw.textureLayer;
+    vMaterial = draw.material;
     vEntity = uvec2(draw.entityId, draw.highlight);
     gl_Position = uViewProj * vec4(worldPos, 1.0);
 }

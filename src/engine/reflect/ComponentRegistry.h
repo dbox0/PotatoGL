@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/assets/AssetTypes.h"
+
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -41,6 +43,8 @@ struct FieldInfo
     float speed;            // drag speed for numeric widgets
     bool saved = true;      // written to scene files
     bool visible = true;    // shown in the inspector
+    AssetKind asset = AssetKind::None;  // String fields: a reference to an asset of this kind
+    bool color = false;                 // Vec3 fields: edited with a color picker
 };
 
 // "radiansPerSec" -> "Radians Per Sec", "MeshRenderer" -> "Mesh Renderer"
@@ -143,6 +147,16 @@ struct ComponentInfo
     ComponentInfo& hidden()
     {
         fields.back().visible = false;
+        return *this;
+    }
+    ComponentInfo& asset(AssetKind kind)
+    {
+        fields.back().asset = kind;
+        return *this;
+    }
+    ComponentInfo& color()
+    {
+        fields.back().color = true;
         return *this;
     }
 

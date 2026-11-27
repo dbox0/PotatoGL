@@ -100,12 +100,16 @@ add_library(engine STATIC
         src/engine/app/PlayMode.h
         src/engine/assets/AssetCache.cpp
         src/engine/assets/AssetCache.h
+        src/engine/assets/AssetTypes.cpp
+        src/engine/assets/AssetTypes.h
         src/engine/assets/FbxLoader.cpp
         src/engine/assets/FbxLoader.h
         src/engine/assets/GltfLoader.cpp
         src/engine/assets/GltfLoader.h
         src/engine/assets/Image.cpp
         src/engine/assets/Image.h
+        src/engine/assets/Material.cpp
+        src/engine/assets/Material.h
         src/engine/assets/Model.cpp
         src/engine/assets/Model.h
         src/engine/assets/Primitives.cpp
@@ -124,6 +128,7 @@ add_library(engine STATIC
         src/engine/gfx/IndirectBuffer.cpp
         src/engine/gfx/IndirectBuffer.h
         src/engine/gfx/LightData.h
+        src/engine/gfx/MaterialData.h
         src/engine/gfx/OutlineMask.cpp
         src/engine/gfx/OutlineMask.h
         src/engine/gfx/PickBuffer.cpp
@@ -158,7 +163,9 @@ add_library(engine STATIC
         src/engine/script/ScriptRunner.h)
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image nlohmann_json::nlohmann_json)
-target_compile_definitions(engine PRIVATE "$<$<CONFIG:Debug>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
+# Debug and editor builds read the source tree, so shader edits hot reload and the editor's
+# Project view edits the real assets, not the copy next to the executable
+target_compile_definitions(engine PRIVATE "$<$<OR:$<CONFIG:Debug>,$<BOOL:${BUILD_EDITOR}>>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")
 target_compile_options(engine PRIVATE ${WARNING_FLAGS})
 
 if(BUILD_EDITOR)
@@ -176,8 +183,11 @@ if(BUILD_EDITOR)
     target_link_libraries(imgui PUBLIC SDL3::SDL3)
 
     add_library(editor STATIC
+            src/editor/AssetOps.cpp
+            src/editor/AssetOps.h
             src/editor/DebugPanel.cpp
             src/editor/DebugPanel.h
+            src/editor/DragDrop.h
             src/editor/EditCommands.cpp
             src/editor/EditCommands.h
             src/editor/EditHistory.cpp
@@ -188,8 +198,12 @@ if(BUILD_EDITOR)
             src/editor/InspectorPanel.h
             src/editor/ProfilerPanel.cpp
             src/editor/ProfilerPanel.h
+            src/editor/ProjectPanel.cpp
+            src/editor/ProjectPanel.h
             src/editor/SceneActions.cpp
             src/editor/SceneActions.h
+            src/editor/SceneDialogs.cpp
+            src/editor/SceneDialogs.h
             src/editor/SceneGizmos.cpp
             src/editor/SceneGizmos.h
             src/editor/SceneHierarchyPanel.cpp
@@ -197,9 +211,11 @@ if(BUILD_EDITOR)
             src/editor/SceneViewPanel.cpp
             src/editor/SceneViewPanel.h
             src/editor/Selection.h
+            src/editor/ThumbnailCache.cpp
+            src/editor/ThumbnailCache.h
             src/editor/ViewportPanel.cpp
             src/editor/ViewportPanel.h)
-    target_link_libraries(editor PUBLIC engine PRIVATE imgui)
+    target_link_libraries(editor PUBLIC engine PRIVATE imgui nlohmann_json::nlohmann_json)
     target_compile_options(editor PRIVATE ${WARNING_FLAGS})
 endif()
 
@@ -219,7 +235,7 @@ endif()
 target_compile_options(${PROJECT_NAME} PRIVATE ${WARNING_FLAGS})
 
 # shaders/ and assets/ are copied next to the executable on every build and loaded
-# from there, except in Debug, which reads the source tree (DEV_RESOURCE_DIR above)
+# from there, except in Debug and editor builds, which read the source tree (DEV_RESOURCE_DIR above)
 if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.26)
     set(COPY_DIR_CMD copy_directory_if_different)
 else()

@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+class AssetCache;
 class Camera;
 class CameraController;
 class ComponentRegistry;
@@ -13,6 +14,7 @@ class Scene;
 struct OverlayContext
 {
     Renderer& renderer;
+    AssetCache& assets;
     Scene& scene;
     Camera& camera;  // editor camera
     CameraController& controller;
@@ -33,6 +35,11 @@ public:
     virtual bool editorCameraInput() const = 0;  // the editor camera may take clicks and keys
     virtual bool gameInput() const = 0;          // gameplay Input sees the keyboard
     virtual bool visible() const = 0;            // false: App draws the game camera to the window
+
+    // The window was asked to close. false: not yet (e.g. unsaved changes); App then quits
+    // once quitRequested() turns true.
+    virtual bool confirmQuit() { return true; }
+    virtual bool quitRequested() const { return false; }
 
     virtual void update(const OverlayContext& context) = 0;       // builds the UI, before the game updates
     virtual void renderViews(const OverlayContext& context) = 0;  // draws the scene into the UI's views

@@ -4,7 +4,11 @@
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
+
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -17,6 +21,17 @@ entt::entity resolve(Scene& scene, std::uint64_t uuid)
         return entt::null;
     const entt::entity e = scene.findByUuid(uuid);
     return e != entt::null && scene.registry().valid(e) ? e : entt::null;
+}
+
+// From the Transform chain, not WorldTransform, which lags structural edits
+glm::mat4 worldMatrix(const entt::registry& registry, entt::entity e)
+{
+    glm::mat4 world(1.0f);
+    for (; e != entt::null; e = registry.get<Relationship>(e).parent) {
+        if (const Transform* t = registry.try_get<Transform>(e))
+            world = t->getMatrix() * world;
+    }
+    return world;
 }
 
 std::string entityName(Scene& scene, entt::entity e)
@@ -171,23 +186,49 @@ private:
     std::size_t m_fromIndex = SIZE_MAX;
     std::uint64_t m_toParent;
     std::size_t m_toIndex = SIZE_MAX;
+    std::optional<Transform> m_fromTransform;
+    std::optional<Transform> m_toTransform;
     std::string m_label;
 
-    bool move(EditContext& context, std::uint64_t parentUuid, std::size_t index, bool recordFrom)
+    bool move(EditContext& context, std::uint64_t parentUuid, std::size_t index, bool recordFrom,
+              const std::optional<Transform>& local)
     {
         Scene& scene = context.scene;
+        entt::registry& registry = scene.registry();
         const entt::entity e = resolve(scene, m_entity);
         const entt::entity parent = parentUuid == 0 ? scene.root() : resolve(scene, parentUuid);
         if (e == entt::null || parent == entt::null)
             return false;
+        Transform* transform = registry.try_get<Transform>(e);
+        glm::mat4 world(1.0f);
         if (recordFrom) {
             m_fromParent = scene.uuidOf(scene.parentOf(e));
             m_fromIndex = scene.siblingIndex(e);
+            if (transform) {
+                m_fromTransform = *transform;
+                world = worldMatrix(registry, e);
+            }
         }
         if (!scene.setParent(e, parent, index))
             return false;
-        if (recordFrom)
+        if (recordFrom) {
             m_toIndex = scene.siblingIndex(e);
+            if (transform) {
+                // Keep the world placement: new local = inverse(parent world) * old world
+                glm::vec3 translation, scale, skew;
+                glm::quat rotation;
+                glm::vec4 perspective;
+                const glm::mat4 local = glm::inverse(worldMatrix(registry, scene.parentOf(e))) * world;
+                if (glm::decompose(local, scale, rotation, translation, skew, perspective)) {
+                    transform->setPos(translation);
+                    transform->setRot(glm::normalize(rotation));
+                    transform->setScale(scale);
+                }
+                m_toTransform = *transform;
+            }
+        } else if (transform && local) {
+            *transform = *local;
+        }
         return true;
     }
 
@@ -198,10 +239,13 @@ public:
     {
     }
 
-    bool undo(EditContext& context) override { return move(context, m_fromParent, m_fromIndex, false); }
+    bool undo(EditContext& context) override
+    {
+        return move(context, m_fromParent, m_fromIndex, false, m_fromTransform);
+    }
     bool redo(EditContext& context) override
     {
-        return move(context, m_toParent, m_toIndex, m_toIndex == SIZE_MAX);
+        return move(context, m_toParent, m_toIndex, m_toIndex == SIZE_MAX, m_toTransform);
     }
     std::string name() const override { return m_label; }
 };

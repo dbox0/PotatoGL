@@ -8,7 +8,7 @@
 struct DrawData
 {
     glm::vec4 rows[3];
-    GLuint textureLayer;
+    GLuint material;   // index into the material SSBO
     GLuint entityId;   // written by the ID pass for picking
     GLuint highlight;  // 1 = draw the selection outline
     GLuint pad;

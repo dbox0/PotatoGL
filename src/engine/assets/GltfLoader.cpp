@@ -39,12 +39,37 @@ private:
     const cgltf_data* m_data;
     const std::string& m_path;
     std::vector<int> m_imageToTexture;  // -1 = not loaded yet, -2 = failed
+    std::vector<int> m_materialSlots;   // -1 = not created yet
     ModelData m_model;
 
-    int textureFor(const cgltf_material* material)
+    int materialFor(const cgltf_material* material)
     {
         if (!material)
             return -1;
+        int& slot = m_materialSlots[static_cast<std::size_t>(material - m_data->materials)];
+        if (slot >= 0)
+            return slot;
+
+        MaterialData out;
+        out.texture = textureFor(material);
+        if (material->has_pbr_metallic_roughness) {
+            const cgltf_pbr_metallic_roughness& pbr = material->pbr_metallic_roughness;
+            out.baseColor = glm::make_vec4(pbr.base_color_factor);
+            // Metallic/roughness maps aren't supported; their factors alone usually mean "fully metal"
+            if (!pbr.metallic_roughness_texture.texture) {
+                out.metallic = pbr.metallic_factor;
+                out.smoothness = 1.0f - pbr.roughness_factor;
+            }
+        }
+        if (!material->emissive_texture.texture)
+            out.emission = glm::make_vec3(material->emissive_factor);
+        slot = static_cast<int>(m_model.materials.size());
+        m_model.materials.push_back(out);
+        return slot;
+    }
+
+    int textureFor(const cgltf_material* material)
+    {
         const cgltf_texture* texture = material->pbr_metallic_roughness.base_color_texture.texture;
         if (!texture || !texture->image)
             return -1;
@@ -65,7 +90,8 @@ private:
 
 public:
     GltfBuilder(const cgltf_data* data, const std::string& path)
-        : m_data(data), m_path(path), m_imageToTexture(data->images_count, -1)
+        : m_data(data), m_path(path), m_imageToTexture(data->images_count, -1),
+          m_materialSlots(data->materials_count, -1)
     {
     }
 
@@ -102,7 +128,7 @@ public:
                 mesh.indices.push_back(static_cast<std::uint32_t>(i));
         }
 
-        mesh.texture = textureFor(prim.material);
+        mesh.material = materialFor(prim.material);
         m_model.meshes.push_back(std::move(mesh));
     }
 

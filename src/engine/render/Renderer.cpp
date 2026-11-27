@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 
 // Orphans the buffer and refills it, doubling its capacity until the data fits
 static void streamBuffer(GLuint buffer, GLsizeiptr& capacity, const void* data, GLsizeiptr bytes)
@@ -33,9 +34,11 @@ Renderer::Renderer(const Config& config)
     glGenBuffers(1, &m_lightSsbo);
     glGenBuffers(1, &m_clusterSsbo);
     glGenBuffers(1, &m_clusterLightSsbo);
+    glGenBuffers(1, &m_materialSsbo);
     streamBuffer(m_lightSsbo, m_lightSsboBytes, nullptr, 0);
     streamBuffer(m_clusterSsbo, m_clusterSsboBytes, nullptr, 0);
     streamBuffer(m_clusterLightSsbo, m_clusterLightSsboBytes, nullptr, 0);
+    addMaterial(Material{});  // DefaultMaterial
     glGenVertexArrays(1, &m_emptyVao);
     // Allocated up front so the shadow sampler always has a depth texture behind it
     m_shadowMap.resize(m_shadowSettings.size);
@@ -70,6 +73,7 @@ Renderer::~Renderer()
     glDeleteBuffers(1, &m_lightSsbo);
     glDeleteBuffers(1, &m_clusterSsbo);
     glDeleteBuffers(1, &m_clusterLightSsbo);
+    glDeleteBuffers(1, &m_materialSsbo);
     glDeleteVertexArrays(1, &m_emptyVao);
 }
 
@@ -121,38 +125,82 @@ ModelId Renderer::addModel(const ModelData& model)
     std::vector<GLuint> layers;
     layers.reserve(model.textures.size());
     for (const ImageData& image : model.textures)
-        layers.push_back(m_textures.addLayer(image.width, image.height, image.rgba.data()));
-    if (!layers.empty())
-        m_mipsDirty = true;
+        layers.push_back(addTexture(image));
 
+    std::vector<MaterialId> materials;
+    materials.reserve(model.materials.size());
+    for (const MaterialData& data : model.materials) {
+        Material material;
+        material.baseColor = data.baseColor;
+        material.emission = data.emission;
+        material.metallic = data.metallic;
+        material.smoothness = data.smoothness;
+        if (data.texture >= 0 && static_cast<std::size_t>(data.texture) < layers.size())
+            material.textureLayer = layers[static_cast<std::size_t>(data.texture)];
+        materials.push_back(addMaterial(material));
+    }
+
+    Bounds bounds{glm::vec3(std::numeric_limits<float>::max()), glm::vec3(std::numeric_limits<float>::lowest())};
     const auto firstSubmesh = static_cast<std::uint32_t>(m_submeshes.size());
     for (const MeshData& mesh : model.meshes) {
         if (mesh.indices.empty())
             continue;
+        for (const Vertex& v : mesh.vertices) {
+            bounds.min = glm::min(bounds.min, v.position);
+            bounds.max = glm::max(bounds.max, v.position);
+        }
         const MeshRange range = m_geometry.addMesh(mesh.vertices, mesh.indices);
-        const GLuint layer = mesh.texture >= 0 ? layers[static_cast<std::size_t>(mesh.texture)] : 0;
-        m_submeshes.push_back({range, layer});
+        const bool hasMaterial = mesh.material >= 0 && static_cast<std::size_t>(mesh.material) < materials.size();
+        m_submeshes.push_back({range, hasMaterial ? materials[static_cast<std::size_t>(mesh.material)] : DefaultMaterial});
     }
     const auto submeshCount = static_cast<std::uint32_t>(m_submeshes.size()) - firstSubmesh;
     if (submeshCount == 0)
         return InvalidModel;
 
-    m_models.push_back({firstSubmesh, submeshCount});
+    m_models.push_back({firstSubmesh, submeshCount, bounds});
     return static_cast<ModelId>(m_models.size() - 1);
 }
 
-void Renderer::addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId, bool highlight)
+Renderer::Bounds Renderer::modelBounds(ModelId model) const
+{
+    return model < m_models.size() ? m_models[model].bounds : Bounds{};
+}
+
+GLuint Renderer::addTexture(const ImageData& image)
+{
+    m_mipsDirty = true;
+    return m_textures.addLayer(image.width, image.height, image.rgba.data());
+}
+
+MaterialId Renderer::addMaterial(const Material& material)
+{
+    m_materials.push_back(GpuMaterial::from(material));
+    m_materialsDirty = true;
+    return static_cast<MaterialId>(m_materials.size() - 1);
+}
+
+void Renderer::setMaterial(MaterialId id, const Material& material)
+{
+    if (id >= m_materials.size())
+        return;
+    m_materials[id] = GpuMaterial::from(material);
+    m_materialsDirty = true;
+}
+
+void Renderer::addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId, bool highlight,
+                           MaterialId material)
 {
     if (model >= m_models.size())
         return;
     const ModelEntry& entry = m_models[model];
+    const bool overridden = material < m_materials.size();
     DrawData draw{};
     draw.setModel(transform);
     draw.entityId = entityId;
     draw.highlight = highlight ? 1u : 0u;
     for (std::uint32_t i = 0; i < entry.submeshCount; ++i) {
         const std::uint32_t submesh = entry.firstSubmesh + i;
-        draw.textureLayer = m_submeshes[submesh].textureLayer;
+        draw.material = overridden ? material : m_submeshes[submesh].material;
         m_instanceSubmesh.push_back(submesh);
         m_instanceDraws.push_back(draw);
     }
@@ -337,6 +385,11 @@ void Renderer::prepare()
         uploadLights();
         m_lightsDirty = false;
     }
+    if (m_materialsDirty) {
+        streamBuffer(m_materialSsbo, m_materialSsboBytes, m_materials.data(),
+                     static_cast<GLsizeiptr>(m_materials.size() * sizeof(GpuMaterial)));
+        m_materialsDirty = false;
+    }
 }
 
 void Renderer::drawScene(const IndirectBuffer& draws) const
@@ -375,7 +428,7 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
 
     scene->bindHdr();
     glViewport(0, 0, width, height);
-    glClearColor(0.01f, 0.01f, 0.014f, 1.0f);
+    glClearColor(m_clearColor.r, m_clearColor.g, m_clearColor.b, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     if (m_depthPrepass) {
@@ -410,6 +463,7 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, m_lightSsbo);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, m_clusterSsbo);
         glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, m_clusterLightSsbo);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, m_materialSsbo);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_shadowMap.texture());
         m_textures.bind(0);
@@ -439,6 +493,62 @@ void Renderer::render(const ViewMatrices& view, const RenderTarget* target, int 
         glDisable(GL_FRAMEBUFFER_SRGB);
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Renderer::renderPreview(ModelId model, MaterialId material, const RenderTarget& target, const glm::vec3& from)
+{
+    if (model >= m_models.size() || !target.valid())
+        return;
+
+    m_previewSubmesh.clear();
+    m_previewDraws.clear();
+    m_previewLights.clear();
+    m_instanceSubmesh.swap(m_previewSubmesh);
+    m_instanceDraws.swap(m_previewDraws);
+    m_lights.swap(m_previewLights);
+    const glm::vec3 sunDirection = m_sunDirection, sunRadiance = m_sunRadiance;
+    const glm::vec3 sky = m_skyColor, ground = m_groundColor, clear = m_clearColor;
+    const float exposure = m_exposure;
+    const bool shadows = m_shadowSettings.enabled, prepass = m_depthPrepass;
+
+    const glm::vec3 back = glm::normalize(from);
+    const glm::vec3 side = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), back));
+    m_sunDirection = glm::normalize(back + side * -0.8f + glm::vec3(0.0f, 1.2f, 0.0f));  // key light, upper left
+    m_sunRadiance = glm::vec3(2.6f);
+    m_skyColor = glm::vec3(0.40f, 0.42f, 0.48f);
+    m_groundColor = glm::vec3(0.12f, 0.11f, 0.10f);
+    m_clearColor = glm::vec3(0.028f);
+    m_exposure = 1.0f;
+    m_shadowSettings.enabled = false;
+    m_depthPrepass = false;
+    m_lightsDirty = true;
+
+    addInstance(model, glm::mat4(1.0f), PickBuffer::NoId, false, material);
+
+    const Bounds& bounds = m_models[model].bounds;
+    const glm::vec3 center = (bounds.min + bounds.max) * 0.5f;
+    const float radius = std::max(glm::length(bounds.max - bounds.min) * 0.5f, 1e-3f);
+    constexpr float fov = glm::radians(30.0f);
+    const float distance = radius / std::sin(fov * 0.5f);
+    const glm::vec3 eye = center + back * distance;
+    const ViewMatrices view{glm::lookAt(eye, center, glm::vec3(0.0f, 1.0f, 0.0f)),
+                            glm::perspective(fov, static_cast<float>(target.width()) / static_cast<float>(target.height()),
+                                             std::max(distance - radius * 1.5f, distance * 0.01f), distance + radius * 1.5f)};
+    render(view, &target, target.width(), target.height());
+
+    m_instanceSubmesh.swap(m_previewSubmesh);
+    m_instanceDraws.swap(m_previewDraws);
+    m_lights.swap(m_previewLights);
+    m_sunDirection = sunDirection;
+    m_sunRadiance = sunRadiance;
+    m_skyColor = sky;
+    m_groundColor = ground;
+    m_clearColor = clear;
+    m_exposure = exposure;
+    m_shadowSettings.enabled = shadows;
+    m_depthPrepass = prepass;
+    m_drawsDirty = true;
+    m_lightsDirty = true;
 }
 
 void Renderer::renderIds(const glm::mat4& viewProj, const PickBuffer& target)
@@ -560,6 +670,7 @@ Renderer::Stats Renderer::stats() const
     s.textureLayerCapacity = m_textures.layerCapacity();
     s.textureSize = m_textures.layerSize();
     s.models = m_models.size();
+    s.materials = m_materials.size();
     s.lights = m_lights.size();
     s.clusterRefs = m_clusters.indices().size();
     return s;

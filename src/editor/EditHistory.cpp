@@ -18,6 +18,7 @@ void EditHistory::push(std::unique_ptr<EditCommand> command)
 
 void EditHistory::pushStep(Step step)
 {
+    step.id = m_nextId++;
     m_redo.clear();
     m_undo.push_back(std::move(step));
     ++m_pendingSteps;
@@ -68,6 +69,15 @@ std::optional<SelectionIds> EditHistory::redo(EditContext& context)
         }
     }
     return std::nullopt;
+}
+
+std::uint64_t EditHistory::stateId() const
+{
+    for (auto it = m_undo.rbegin(); it != m_undo.rend(); ++it) {
+        if (it->command)
+            return it->id;
+    }
+    return 0;
 }
 
 void EditHistory::clear()

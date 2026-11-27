@@ -5,6 +5,7 @@
 #include <ufbx.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <unordered_map>
 
@@ -42,6 +43,20 @@ static const ufbx_texture* baseColorTexture(const ufbx_material* material)
     return material->fbx.diffuse_color.texture;
 }
 
+// FBX colors are authored in sRGB
+static glm::vec4 baseColorOf(const ufbx_material& material)
+{
+    const ufbx_material_map& map = material.pbr.base_color.has_value ? material.pbr.base_color
+                                                                       : material.fbx.diffuse_color;
+    if (!map.has_value)
+        return glm::vec4(1.0f);
+    const auto toLinear = [](ufbx_real c) {
+        const float f = static_cast<float>(c);
+        return f <= 0.04045f ? f / 12.92f : std::pow((f + 0.055f) / 1.055f, 2.4f);
+    };
+    return glm::vec4(toLinear(map.value_vec4.x), toLinear(map.value_vec4.y), toLinear(map.value_vec4.z), 1.0f);
+}
+
 std::optional<ModelData> loadFbx(const std::string& path)
 {
     ufbx_load_opts opts{};
@@ -58,6 +73,7 @@ std::optional<ModelData> loadFbx(const std::string& path)
 
     ModelData model;
     std::unordered_map<const ufbx_texture*, int> textureSlots;  // -1 = failed to load
+    std::unordered_map<const ufbx_material*, int> materialSlots;
 
     for (const ufbx_node* node : scene->nodes) {
         const ufbx_mesh* mesh = node->mesh;
@@ -107,15 +123,26 @@ std::optional<ModelData> loadFbx(const std::string& path)
             out.vertices = std::move(vertices);
 
             const ufbx_material* material = part.index < mesh->materials.count ? mesh->materials.data[part.index] : nullptr;
-            if (const ufbx_texture* texture = baseColorTexture(material)) {
-                auto [it, inserted] = textureSlots.try_emplace(texture, -1);
+            if (material) {
+                auto [slot, inserted] = materialSlots.try_emplace(material, -1);
                 if (inserted) {
-                    if (std::optional<ImageData> image = loadTexture(*texture, path)) {
-                        it->second = static_cast<int>(model.textures.size());
-                        model.textures.push_back(std::move(*image));
+                    MaterialData data;
+                    if (const ufbx_texture* texture = baseColorTexture(material)) {
+                        auto [it, added] = textureSlots.try_emplace(texture, -1);
+                        if (added) {
+                            if (std::optional<ImageData> image = loadTexture(*texture, path)) {
+                                it->second = static_cast<int>(model.textures.size());
+                                model.textures.push_back(std::move(*image));
+                            }
+                        }
+                        data.texture = it->second;
+                    } else {
+                        data.baseColor = baseColorOf(*material);
                     }
+                    slot->second = static_cast<int>(model.materials.size());
+                    model.materials.push_back(data);
                 }
-                out.texture = it->second;
+                out.material = slot->second;
             }
             model.meshes.push_back(std::move(out));
         }

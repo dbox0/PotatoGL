@@ -6,6 +6,7 @@
 #include "engine/gfx/GpuProfiler.h"
 #include "engine/gfx/IndirectBuffer.h"
 #include "engine/gfx/LightData.h"
+#include "engine/gfx/MaterialData.h"
 #include "engine/gfx/OutlineMask.h"
 #include "engine/gfx/PickBuffer.h"
 #include "engine/gfx/RenderTarget.h"
@@ -48,11 +49,21 @@ public:
         GLsizeiptr draws, drawCapacity;
         GLsizei textureLayers, textureLayerCapacity, textureSize;
         std::size_t models;
+        std::size_t materials;
         std::size_t lights;
         std::size_t clusterRefs;  // light references across all clusters, last view rendered
     };
 
     // Directional light only. The map covers a sphere around the first `distance` metres of the view.
+    struct Bounds
+    {
+        glm::vec3 min{0.0f};
+        glm::vec3 max{0.0f};
+    };
+
+    // Always exists: white, untextured; used by meshes imported without a material
+    static constexpr MaterialId DefaultMaterial = 0;
+
     struct ShadowSettings
     {
         bool enabled = true;
@@ -64,7 +75,7 @@ private:
     struct Submesh
     {
         MeshRange range;
-        GLuint textureLayer;
+        MaterialId material;
     };
 
     GpuProfiler m_profiler;
@@ -88,11 +99,16 @@ private:
     GLuint m_lightSsbo = 0;
     GLuint m_clusterSsbo = 0;
     GLuint m_clusterLightSsbo = 0;
+    GLuint m_materialSsbo = 0;
+    GLsizeiptr m_materialSsboBytes = 64 * sizeof(GpuMaterial);
     GLsizeiptr m_lightSsboBytes = 64 * sizeof(LightData);
     GLsizeiptr m_clusterSsboBytes = LightClusters::Count * sizeof(LightClusters::Range);
     GLsizeiptr m_clusterLightSsboBytes = 4096 * sizeof(std::uint32_t);
 
     std::vector<LightData> m_lights;
+    std::vector<GpuMaterial> m_materials;
+    bool m_materialsDirty = true;
+    glm::vec3 m_clearColor{0.01f, 0.01f, 0.014f};
     glm::vec3 m_sunDirection{0.0f, 1.0f, 0.0f};
     glm::vec3 m_sunRadiance{0.0f};
     glm::vec3 m_skyColor{0.30f, 0.36f, 0.45f};
@@ -108,6 +124,7 @@ private:
     {
         std::uint32_t firstSubmesh;
         std::uint32_t submeshCount;
+        Bounds bounds;
     };
 
     std::vector<Submesh> m_submeshes;
@@ -121,6 +138,10 @@ private:
     std::vector<GLuint> m_groupCursor;
     std::vector<GLuint> m_highlightCursor;
     bool m_drawsDirty = false;
+    // Swapped in by renderPreview so it doesn't disturb the scene's instances and lights
+    std::vector<std::uint32_t> m_previewSubmesh;
+    std::vector<DrawData> m_previewDraws;
+    std::vector<LightData> m_previewLights;
     bool m_mipsDirty = true;
 
     GLint m_viewProjLocation = -1;
@@ -168,9 +189,19 @@ public:
     Renderer(const Renderer&) = delete;
     Renderer& operator=(const Renderer&) = delete;
 
+    // Also adds the model's own textures and materials
     ModelId addModel(const ModelData& model);
+    // Model space; zero-sized for an unknown model
+    Bounds modelBounds(ModelId model) const;
+
+    // sRGB RGBA8, scaled to the texture array's layer size. Returns the layer.
+    GLuint addTexture(const ImageData& image);
+    MaterialId addMaterial(const Material& material);
+    void setMaterial(MaterialId id, const Material& material);
+
+    // material overrides every submesh's own material; InvalidMaterial keeps them
     void addInstance(ModelId model, const glm::mat4& transform, std::uint32_t entityId = PickBuffer::NoId,
-                     bool highlight = false);
+                     bool highlight = false, MaterialId material = InvalidMaterial);
     void clearInstances();
 
     // Clears the directional light too
@@ -201,6 +232,10 @@ public:
     {
         render(view, &target, target.width(), target.height());
     }
+
+    // One model, framed to fill target, under fixed studio lighting (asset thumbnails).
+    // Leaves the scene's instances and lights as they were. from: direction towards the camera.
+    void renderPreview(ModelId model, MaterialId material, const RenderTarget& target, const glm::vec3& from);
 
     // Entity ids and highlight flags for picking
     void renderIds(const glm::mat4& viewProj, const PickBuffer& target);

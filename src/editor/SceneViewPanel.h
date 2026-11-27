@@ -9,9 +9,11 @@
 
 #include <entt/entity/entity.hpp>
 
+#include <string>
 #include <vector>
 
 class EditHistory;
+class SceneActions;
 class Selection;
 struct OverlayContext;
 
@@ -42,6 +44,10 @@ private:
     bool m_pickAdditive = false;   // Ctrl or Shift was held: toggle instead of replace
     int m_pickX = 0, m_pickY = 0;  // pick buffer pixel, bottom-left origin
 
+    // A material dropped on the view: assigned to whatever the pick finds under the cursor
+    std::string m_dropMaterial;
+    entt::entity m_dropTarget = entt::null;
+
     // The selection roots as they were when the current gizmo drag started; the end of a
     // drag is one undo step
     struct DragItem
@@ -56,6 +62,9 @@ private:
     glm::vec3 m_dragActiveScale{1.0f};
 
     void drawToolbar();
+    void acceptDrops(const OverlayContext& context, SceneActions& actions);
+    // Where a ray through the screen point meets the ground (y = 0), or a point in front of the camera
+    glm::vec3 dropPoint(const OverlayContext& context, float x, float y) const;
     void handleHotkeys(const OverlayContext& context);
     void drawGizmo(const OverlayContext& context, EditHistory& history, const Selection& selection);
     void beginDrag(const OverlayContext& context, const Selection& selection);
@@ -63,7 +72,8 @@ private:
 
 public:
     // gameAspect: for the selected cameras' frustums
-    void draw(const OverlayContext& context, EditHistory& history, Selection& selection, float gameAspect);
+    void draw(const OverlayContext& context, EditHistory& history, Selection& selection, SceneActions& actions,
+              float gameAspect);
     // After the scene is updated: color, ids on a click, then the selection outline
     void render(const OverlayContext& context, Selection& selection);
     void release();
@@ -72,4 +82,11 @@ public:
     const char* name() const            { return m_view.name(); }
     bool hovered() const                { return m_view.hovered(); }
     bool focused() const                { return m_view.focused(); }
+    // Screen point (ImGui coordinates) is over the rendered image
+    bool imageContains(float x, float y) const
+    {
+        return m_view.visible() && x >= m_view.imageX() && y >= m_view.imageY() &&
+               x < m_view.imageX() + m_view.imageWidth() && y < m_view.imageY() + m_view.imageHeight();
+    }
+    glm::vec3 dropPointAt(const OverlayContext& context, float x, float y) const { return dropPoint(context, x, y); }
 };

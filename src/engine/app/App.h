@@ -37,7 +37,7 @@ private:
     GameContext gameContext() { return {*m_renderer, m_scene, m_camera, m_components}; }
     OverlayContext overlayContext()
     {
-        return {*m_renderer, m_scene, m_camera, m_controller, m_components, m_playMode};
+        return {*m_renderer, m_assets, m_scene, m_camera, m_controller, m_components, m_playMode};
     }
     void syncRenderInstances();
     void syncRenderLights();

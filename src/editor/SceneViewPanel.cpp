@@ -1,5 +1,6 @@
 #include "SceneViewPanel.h"
 
+#include "editor/DragDrop.h"
 #include "editor/EditCommands.h"
 #include "editor/SceneActions.h"
 #include "editor/Selection.h"
@@ -32,10 +33,52 @@ static void applyPick(Selection& selection, entt::entity hit, bool additive)
         selection.toggle(hit);
 }
 
-void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, Selection& selection,
-                          float gameAspect)
+glm::vec3 SceneViewPanel::dropPoint(const OverlayContext& context, float x, float y) const
 {
+    const Camera& camera = context.camera;
+    const glm::vec2 ndc((x - m_view.imageX()) / std::max(m_view.imageWidth(), 1.0f) * 2.0f - 1.0f,
+                        1.0f - (y - m_view.imageY()) / std::max(m_view.imageHeight(), 1.0f) * 2.0f);
+    const glm::mat4 inverse = glm::inverse(camera.getProjection() * camera.getView());
+    const glm::vec4 nearH = inverse * glm::vec4(ndc, -1.0f, 1.0f);
+    const glm::vec4 farH = inverse * glm::vec4(ndc, 1.0f, 1.0f);
+    const glm::vec3 origin = glm::vec3(nearH) / nearH.w;
+    const glm::vec3 dir = glm::normalize(glm::vec3(farH) / farH.w - origin);
+    if (std::abs(dir.y) > 1e-4f) {
+        const float t = -origin.y / dir.y;
+        if (t > 0.0f && t < 500.0f)
+            return origin + dir * t;
+    }
+    return origin + dir * 8.0f;
+}
+
+// Called right after the image, so the drop target is the image
+void SceneViewPanel::acceptDrops(const OverlayContext& context, SceneActions& actions)
+{
+    if (!ImGui::BeginDragDropTarget())
+        return;
+    const ImVec2 mouse = ImGui::GetMousePos();
+    if (const char* asset = acceptAssetDrop({AssetKind::Model, AssetKind::Prefab}))
+        actions.instantiate(asset, entt::null, SceneActions::Placement::At, dropPoint(context, mouse.x, mouse.y));
+    if (const char* material = acceptAssetDrop({AssetKind::Material})) {
+        const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
+        m_pickX = static_cast<int>((mouse.x - m_view.imageX()) * scale.x);
+        m_pickY = m_view.target().height() - 1 - static_cast<int>((mouse.y - m_view.imageY()) * scale.y);
+        m_pickRequested = true;
+        m_dropMaterial = material;
+    }
+    ImGui::EndDragDropTarget();
+}
+
+void SceneViewPanel::draw(const OverlayContext& context, EditHistory& history, Selection& selection,
+                          SceneActions& actions, float gameAspect)
+{
+    if (m_dropTarget != entt::null) {
+        actions.assignMaterial(m_dropTarget, m_dropMaterial);
+        m_dropTarget = entt::null;
+        m_dropMaterial.clear();
+    }
     m_view.draw(nullptr, [&] {
+        acceptDrops(context, actions);
         // No widget over the image: ImGuizmo only grabs the mouse when no item is hovered
         const bool clicked = ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
                              !ImGui::IsAnyItemHovered();
@@ -263,6 +306,7 @@ void SceneViewPanel::render(const OverlayContext& context, Selection& selection)
 {
     if (!m_view.visible()) {
         m_pickRequested = false;
+        m_dropMaterial.clear();
         return;
     }
     GpuProfiler& profiler = context.renderer.profiler();
@@ -287,7 +331,15 @@ void SceneViewPanel::render(const OverlayContext& context, Selection& selection)
         context.renderer.renderIds(viewProj, m_pick);
         const std::uint32_t id = m_pick.read(m_pickX, m_pickY);
         const auto e = static_cast<entt::entity>(id);
-        applyPick(selection, id != PickBuffer::NoId && registry.valid(e) ? e : entt::null, m_pickAdditive);
+        const entt::entity hit = id != PickBuffer::NoId && registry.valid(e) ? e : entt::null;
+        if (!m_dropMaterial.empty()) {
+            if (hit != entt::null && registry.all_of<MeshRenderer>(hit))
+                m_dropTarget = hit;
+            else
+                m_dropMaterial.clear();
+        } else {
+            applyPick(selection, hit, m_pickAdditive);
+        }
     }
     if (hasSelection && context.renderer.hasHighlight()) {
         {

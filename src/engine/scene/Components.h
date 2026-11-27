@@ -14,11 +14,13 @@ struct Name
     std::string value;
 };
 
-// mesh is what gets saved; App resolves it to model through the AssetCache
+// mesh and material are what gets saved; App resolves them through the AssetCache
 struct MeshRenderer
 {
     std::string mesh;              // model path relative to the resource dir, e.g. "assets/Duck.glb"
     ModelId model = InvalidModel;  // runtime handle, reset whenever mesh changes
+    std::string material;          // .mat path; empty = the model's own materials
+    MaterialId materialId = InvalidMaterial;  // runtime handle, reset whenever material changes
 };
 
 // Stable identity: saved with the scene and kept across save/load, Play/Stop and undo,
@@ -79,6 +81,9 @@ struct SpotLight{
     float innerDeg = 20.0f;
     float outerDeg = 30.0f;
 };
+
+struct SkinnedMeshRenderer{};
+struct Animator{};
 
 // Tags: empty types, EnTT stores no data for them
 struct Disabled {};  // skipped by gameplay systems and scripts

@@ -16,7 +16,7 @@
 #include <cstdio>
 #include <string>
 
-static constexpr const char* MainScene = "assets/scenes/Main.scene";
+static constexpr const char* MainScene = "assets/Scenes/Main.scene";
 
 // Used when there's no saved scene yet; save it from the editor to start editing it
 static void buildDefaultScene(Scene& scene)
@@ -35,14 +35,14 @@ static void buildDefaultScene(Scene& scene)
             Transform& transform = registry.get<Transform>(e);
             transform.setPos(pos);
             transform.rotate(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-            registry.emplace<MeshRenderer>(e, duckMesh);
+            registry.emplace<MeshRenderer>(e).mesh = duckMesh;
             registry.emplace<Spin>(e, 0.5f + static_cast<float>((x * 13 + z * 7) % 16) * 0.1f);
 
             if (x == 0 && z == 0) {
                 const entt::entity duckling = scene.createGameObject("Duckling", e);
                 registry.get<Transform>(duckling).setPos({0.0f, 1.5f, 0.0f});
                 registry.get<Transform>(duckling).setScale(glm::vec3(0.5f));
-                registry.emplace<MeshRenderer>(duckling, duckMesh);
+                registry.emplace<MeshRenderer>(duckling).mesh = duckMesh;
                 registry.emplace<Rotator>(duckling, glm::vec3(1.0f, 0.0f, 0.0f), 180.0f);
             }
         }

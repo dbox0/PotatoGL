@@ -4,7 +4,9 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class EditHistory;
@@ -28,9 +30,19 @@ enum class CreateKind
 
 // Object-level edits asked for by menus, shortcuts and the hierarchy. Requests made while
 // drawing run together in apply(), once no panel is walking the hierarchy.
-// Duplicate and Paste copy whole subtrees, like Unity, with fresh uuids.
+// Duplicate and Paste copy whole subtrees, like Unity, with fresh uuids. Models and prefabs
+// from the Project view are instantiated through here too.
 class SceneActions
 {
+public:
+    // Where an instantiated asset's root goes
+    enum class Placement
+    {
+        Keep,   // where the asset has it (a model: the origin)
+        Spawn,  // the spawn point given to apply()
+        At,     // a given position
+    };
+
 private:
     enum class Type
     {
@@ -39,12 +51,23 @@ private:
         Copy,
         Paste,
         Delete,
+        Instantiate,
+        AssignMaterial,
     };
     struct Request
     {
         Type type;
         CreateKind kind = CreateKind::Empty;
-        entt::entity parent = entt::null;
+        entt::entity parent = entt::null;  // AssignMaterial: the target
+        std::string asset;
+        Placement placement = Placement::Keep;
+        glm::vec3 position{0.0f};
+
+        Request(Type t, CreateKind k = CreateKind::Empty, entt::entity p = entt::null, std::string a = {},
+                Placement pl = Placement::Keep, const glm::vec3& at = glm::vec3(0.0f))
+            : type(t), kind(k), parent(p), asset(std::move(a)), placement(pl), position(at)
+        {
+        }
     };
     struct Copied
     {
@@ -61,6 +84,9 @@ private:
     void applyCopy(EditContext& context, const Selection& selection);
     void applyPaste(EditContext& context, EditHistory& history, Selection& selection);
     void applyDelete(EditContext& context, EditHistory& history, Selection& selection);
+    void applyInstantiate(EditContext& context, EditHistory& history, Selection& selection, const Request& request,
+                          const glm::vec3& spawn);
+    void applyAssignMaterial(EditContext& context, EditHistory& history, const Request& request);
 
 public:
     // parent = entt::null: top level, placed at the spawn point given to apply()
@@ -70,6 +96,18 @@ public:
     void paste()     { m_requests.push_back({Type::Paste}); }
     void remove()    { m_requests.push_back({Type::Delete}); }
     bool canPaste() const { return !m_clipboard.empty(); }
+
+    // A model (as a MeshRenderer) or a prefab; parent = entt::null: top level
+    void instantiate(std::string asset, entt::entity parent = entt::null, Placement placement = Placement::Spawn,
+                     const glm::vec3& position = glm::vec3(0.0f))
+    {
+        m_requests.push_back({Type::Instantiate, CreateKind::Empty, parent, std::move(asset), placement, position});
+    }
+    // Sets e's MeshRenderer material; e must have one
+    void assignMaterial(entt::entity e, std::string material)
+    {
+        m_requests.push_back({Type::AssignMaterial, CreateKind::Empty, e, std::move(material)});
+    }
 
     // ImGui menu items: one per CreateKind, and Duplicate / Copy / Paste / Delete
     void drawCreateItems(entt::entity parent = entt::null);

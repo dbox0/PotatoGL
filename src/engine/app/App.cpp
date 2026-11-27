@@ -117,12 +117,14 @@ void App::syncRenderInstances()
             if (mesh.model == InvalidModel)
                 continue;
         }
+        if (mesh.materialId == InvalidMaterial && !mesh.material.empty())
+            mesh.materialId = m_assets.material(mesh.material);
         bool highlight = false;
         if (anySelected) {
             for (entt::entity e = entity; e != entt::null && !highlight; e = registry.get<Relationship>(e).parent)
                 highlight = selected->contains(e);
         }
-        m_renderer->addInstance(mesh.model, world.matrix, entt::to_integral(entity), highlight);
+        m_renderer->addInstance(mesh.model, world.matrix, entt::to_integral(entity), highlight, mesh.materialId);
     }
 }
 
@@ -175,10 +177,12 @@ void App::handleEvent(const SDL_Event& event)
     if (!clickOnUi)
         m_controller.handleEvent(event, m_window);
 
-    if (event.type == SDL_EVENT_QUIT)
-        m_running = false;
-    else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE)
-        m_running = false;
+    if (event.type == SDL_EVENT_QUIT) {
+        if (!m_overlay || m_overlay->confirmQuit())
+            m_running = false;
+    } else if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE && !m_overlay) {
+        m_running = false;  // the editor uses Escape to cancel things
+    }
     else if (event.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED)
         onResize(event.window.data1, event.window.data2);
 }
@@ -198,8 +202,11 @@ void App::run()
         while (SDL_PollEvent(&event))
             handleEvent(event);
 
-        if (m_overlay)
+        if (m_overlay) {
             m_overlay->update(overlayContext());
+            if (m_overlay->quitRequested())
+                m_running = false;
+        }
 
         // With the editor, WASD only flies while looking (Unity style); otherwise W/E/R pick gizmos
         m_controller.setKeyboardEnabled(!m_overlay || m_controller.isLooking());

@@ -1,5 +1,6 @@
 #include "SceneHierarchyPanel.h"
 
+#include "editor/DragDrop.h"
 #include "editor/EditCommands.h"
 #include "editor/SceneActions.h"
 #include "editor/Selection.h"
@@ -12,8 +13,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-
-static constexpr const char* EntityPayload = "SCENE_ENTITY";
 
 void SceneHierarchyPanel::draw(Scene& scene, const ComponentRegistry& components, EditHistory& history,
                                Selection& selection, SceneActions& actions)
@@ -42,6 +41,8 @@ void SceneHierarchyPanel::draw(Scene& scene, const ComponentRegistry& components
                 m_reparentChild = *static_cast<const entt::entity*>(payload->Data);
                 m_reparentTarget = scene.root();
             }
+            if (const char* asset = acceptAssetDrop({AssetKind::Model, AssetKind::Prefab}))
+                actions.instantiate(asset, entt::null, SceneActions::Placement::Keep);
             ImGui::EndDragDropTarget();
         }
         if (ImGui::IsItemClicked() && !ImGui::GetIO().KeyCtrl && !ImGui::GetIO().KeyShift)
@@ -144,6 +145,12 @@ void SceneHierarchyPanel::drawNode(Scene& scene, entt::entity e)
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EntityPayload)) {
             m_reparentChild = *static_cast<const entt::entity*>(payload->Data);
             m_reparentTarget = e;
+        }
+        if (const char* asset = acceptAssetDrop({AssetKind::Model, AssetKind::Prefab}))
+            m_actions->instantiate(asset, e, SceneActions::Placement::Keep);
+        if (registry.all_of<MeshRenderer>(e)) {
+            if (const char* material = acceptAssetDrop({AssetKind::Material}))
+                m_actions->assignMaterial(e, material);
         }
         ImGui::EndDragDropTarget();
     }

@@ -48,10 +48,21 @@ void registerSceneComponents(ComponentRegistry& components)
                 renderer->mesh = std::get<std::string>(v);
                 renderer->model = InvalidModel;
             })
+        .asset(AssetKind::Model)
+        .property(
+            "material", "Material", FieldType::String,
+            [](const void* c) -> FieldValue { return static_cast<const MeshRenderer*>(c)->material; },
+            [](void* c, const FieldValue& v) {
+                auto* renderer = static_cast<MeshRenderer*>(c);
+                renderer->material = std::get<std::string>(v);
+                renderer->materialId = InvalidMaterial;
+            })
+        .asset(AssetKind::Material)
         .property(
             "model", "Model", FieldType::Int,
             [](const void* c) -> FieldValue { return static_cast<int>(static_cast<const MeshRenderer*>(c)->model); },
-            nullptr);
+            nullptr)
+        .hidden();
 
     components.add<CameraComponent>("Camera")
         .field<&CameraComponent::fovDeg>("fovDeg", "FOV", 0.5f)
@@ -61,16 +72,16 @@ void registerSceneComponents(ComponentRegistry& components)
         .field<&CameraComponent::orthoHeight>("orthoHeight", 0.1f);
 
     components.add<DirectionalLight>("DirectionalLight")
-        .field<&DirectionalLight::color>("color", 0.01f)
+        .field<&DirectionalLight::color>("color", 0.01f).color()
         .field<&DirectionalLight::intensity>("intensity", 0.01f);
 
     components.add<PointLight>("PointLight")
-        .field<&PointLight::color>("color", 0.01f)
+        .field<&PointLight::color>("color", 0.01f).color()
         .field<&PointLight::intensity>("intensity", 0.01f)
         .field<&PointLight::range>("range", 0.1f);
 
     components.add<SpotLight>("SpotLight")
-        .field<&SpotLight::color>("color", 0.01f)
+        .field<&SpotLight::color>("color", 0.01f).color()
         .field<&SpotLight::intensity>("intensity", 0.01f)
         .field<&SpotLight::range>("range", 0.1f)
         .field<&SpotLight::innerDeg>("innerDeg", "Inner Angle", 0.5f)
