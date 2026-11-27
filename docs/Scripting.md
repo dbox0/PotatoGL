@@ -212,3 +212,8 @@ inspector (like Transform's quaternion, which is what gets saved).
 `.addable = false` alone for components that need constructor data.
 
 Components that aren't registered (`WorldTransform`, `Selected`, `Dead`) are never saved.
+
+## Events
+
+Scripts talk to each other and to the UI through the event bus: `ctx.emit()`,
+`ctx.enqueue()` and `ctx.on<Event, &Script::method>()`. See [Events.md](Events.md).

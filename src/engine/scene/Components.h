@@ -141,6 +141,26 @@ struct BoneSocket
     const SkeletonData* resolvedFor = nullptr;
 };
 
+
+struct ScriptComponent
+{
+    std::string script;
+};
+
+struct Collider
+{
+
+};
+
+struct Rigidbody{};
+struct CharacterController{};
+struct AnimatorStateMachine{};
+
+struct AudioListener{};
+struct AudioSource{};
+
+struct Tag{};
+struct Layer{};
 // Tags: empty types, EnTT stores no data for them
 struct Disabled {};  // skipped by gameplay systems and scripts
 struct Dead {};      // destroyed at the end of the gameplay step

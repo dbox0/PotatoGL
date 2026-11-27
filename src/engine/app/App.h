@@ -46,6 +46,7 @@ private:
     void syncRenderInstances(Scene& scene);
     void syncRenderLights(const Scene& scene);
     void renderToWindow();
+    void updateInput();
 
 public:
     App() = default;

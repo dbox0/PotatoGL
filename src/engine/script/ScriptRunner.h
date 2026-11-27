@@ -92,6 +92,15 @@ private:
         registry.get<T>(e).onDestroy(ctx);
     }
 
+    template<typename T>
+    static void onRemoved(Entry& entry, entt::registry& registry, entt::entity e)
+    {
+        // A recreated entity can reuse the id; it must not start twice
+        std::erase(entry.pendingStart, e);
+        if (EventListeners* listeners = registry.try_get<EventListeners>(e))
+            listeners->removeScript(entt::type_hash<T>::value());
+    }
+
     void runStarts();
     void run(HookFn Entry::*hook, float dt);
 
@@ -166,6 +175,7 @@ ComponentInfo& ScriptRunner::add(std::string name, int order)
         registry.on_construct<T>().template connect<&ScriptRunner::onConstruct<T>>(*entry);
     if constexpr (HasOnDestroy<T>)
         registry.on_destroy<T>().template connect<&ScriptRunner::onDestroy<T>>(*entry);
+    registry.on_destroy<T>().template connect<&ScriptRunner::onRemoved<T>>(*entry);
     entry->disconnect = [](entt::registry& r, Entry& en) {
         r.on_construct<T>().disconnect(&en);
         r.on_destroy<T>().disconnect(&en);

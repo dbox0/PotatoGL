@@ -5,6 +5,7 @@
 #include "engine/anim/AnimAsset.h"
 #include "engine/app/CameraController.h"
 #include "engine/assets/AssetCache.h"
+#include "engine/core/EventBus.h"
 #include "engine/core/Paths.h"
 #include "engine/reflect/ComponentRegistry.h"
 #include "engine/render/Renderer.h"
@@ -131,6 +132,22 @@ bool Editor::gameInput() const
     return !m_visible || (!m_viewer.isOpen() && m_gameView.focused() && !ImGui::GetIO().WantTextInput);
 }
 
+bool Editor::gameViewRect(float& x, float& y, float& w, float& h) const
+{
+    if (!m_visible || m_viewer.isOpen() || m_inPrefab || !m_gameView.visible())
+        return false;
+    x = m_gameView.imageX();
+    y = m_gameView.imageY();
+    w = m_gameView.imageWidth();
+    h = m_gameView.imageHeight();
+    return true;
+}
+
+bool Editor::gameViewHovered() const
+{
+    return m_gameView.hovered() && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+}
+
 bool Editor::confirmQuit()
 {
     if (!m_initialized)
@@ -173,6 +190,8 @@ void Editor::update(const OverlayContext& context)
     m_profilerPanel.draw(context.renderer.profiler());
     m_hierarchyPanel.draw(context.scene, context.components, m_history, m_selection, m_actions);
     m_projectPanel.draw(m_thumbnails);
+    const ImGuiWindow* projectWindow = ImGui::FindWindowByName(ProjectPanel::WindowName);
+    m_consolePanel.draw(projectWindow ? projectWindow->DockId : 0);
     syncAssetSelection();
     m_inspectorPanel.draw(context.scene, context.components, m_selection.active(), m_history, m_selection.size(),
                           context.assets, m_thumbnails, m_selection.empty() ? m_projectPanel.selected() : std::string());
@@ -314,6 +333,7 @@ void Editor::drawDockSpace()
         ImGui::DockBuilderDockWindow("Scene Hierarchy", right);
         ImGui::DockBuilderDockWindow("Inspector", rightBottom);
         ImGui::DockBuilderDockWindow(ProjectPanel::WindowName, bottom);
+        ImGui::DockBuilderDockWindow(ConsolePanel::WindowName, bottom);
         ImGui::DockBuilderDockWindow("Debug", left);
         ImGui::DockBuilderFinish(dockId);
         m_selectSceneTab = true;
@@ -410,6 +430,7 @@ void Editor::drawMenuBar(const OverlayContext& context)
 
     if (ImGui::BeginMenu("Window")) {
         ImGui::MenuItem("Profiler", nullptr, &m_profilerPanel.open());
+        ImGui::MenuItem("Console", nullptr, &m_consolePanel.open());
         ImGui::Separator();
         if (ImGui::MenuItem("Reset Layout"))
             m_resetLayout = true;
@@ -477,6 +498,8 @@ void Editor::setPlaying(const OverlayContext& context, bool playing)
     }
 
     context.playMode = PlayMode::Edit;
+    if (EventBus* bus = context.scene.registry().ctx().find<EventBus>())
+        bus->clearQueue();
     std::string error;
     if (loadScene(context.scene, context.components, m_playSnapshot, &error))
         setSelection(context.scene, m_playSelection);
@@ -902,6 +925,7 @@ void Editor::updateViewer(const OverlayContext& context)
     updateTitle(context);
     drawMenuBar(context);
     m_profilerPanel.draw(context.renderer.profiler());
+    m_consolePanel.draw(0);
     m_viewer.draw(context);
     m_dialogs.draw();
     if (m_viewer.takeAssetsChanged())

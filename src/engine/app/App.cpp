@@ -1,6 +1,7 @@
 #include "App.h"
 
 #include "engine/anim/AnimationSystem.h"
+#include "engine/core/EventBus.h"
 #include "engine/core/Input.h"
 #include "engine/scene/ComponentReflection.h"
 
@@ -96,6 +97,7 @@ bool App::init(const char* title, int width, int height)
     if (m_overlay)
         m_controller.setLookButtons(SDL_BUTTON_RMASK);  // left click belongs to picking and gizmos
     m_scene.registry().ctx().emplace<Input>();
+    m_scene.registry().ctx().emplace<EventBus>();
     registerSceneComponents(m_components);
     if (m_game && !m_game->init(gameContext()))
         return false;
@@ -202,6 +204,25 @@ void App::renderToWindow()
     m_renderer->render(*view, nullptr, m_fbWidth, m_fbHeight);
 }
 
+// Mouse in game pixels: the Game view's image in the editor, else the window
+void App::updateInput()
+{
+    float mouseX = 0.0f, mouseY = 0.0f;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    const float density = SDL_GetWindowPixelDensity(m_window);
+    glm::vec2 position = glm::vec2(mouseX, mouseY) * density;
+    bool mouse = true;
+    if (m_overlay && m_overlay->visible()) {
+        float x, y, w, h;
+        mouse = m_overlay->gameViewRect(x, y, w, h);
+        if (mouse) {
+            position = (glm::vec2(mouseX, mouseY) - glm::vec2(x, y)) * density;
+            mouse = m_overlay->gameViewHovered() && mouseX >= x && mouseY >= y && mouseX < x + w && mouseY < y + h;
+        }
+    }
+    m_scene.registry().ctx().get<Input>().update(!m_overlay || m_overlay->gameInput(), mouse, position);
+}
+
 void App::onResize(int width, int height)
 {
     if (width <= 0 || height <= 0)
@@ -214,6 +235,7 @@ void App::handleEvent(const SDL_Event& event)
 {
     if (m_overlay)
         m_overlay->processEvent(event);
+    m_scene.registry().ctx().get<Input>().handleEvent(event);
     const bool clickOnUi =
         event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && m_overlay && !m_overlay->editorCameraInput();
     if (!clickOnUi)
@@ -252,12 +274,13 @@ void App::run()
 
         // With the editor, WASD only flies while looking (Unity style); otherwise W/E/R pick gizmos
         m_controller.setKeyboardEnabled(!m_overlay || m_controller.isLooking());
-        m_scene.registry().ctx().get<Input>().update(!m_overlay || m_overlay->gameInput());
+        updateInput();
         m_controller.update(dt, m_camera);
         m_renderer->pollShaderChanges();
 
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
+        m_scene.registry().ctx().get<EventBus>().flush();
 
         Scene& scene = activeScene();
         updateAnimators(scene, dt);

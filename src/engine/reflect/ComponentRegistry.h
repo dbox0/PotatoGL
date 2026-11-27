@@ -29,9 +29,13 @@ enum class FieldType
     Quat,
     String,
     Entity,
+    Vec2,
+    Vec4,
+    Enum,  // an int, or an enum class member, named by FieldInfo::options
 };
 
-using FieldValue = std::variant<float, int, bool, glm::vec3, glm::quat, std::string, entt::entity>;
+using FieldValue =
+    std::variant<float, int, bool, glm::vec3, glm::quat, std::string, entt::entity, glm::vec2, glm::vec4>;
 
 struct FieldInfo
 {
@@ -44,8 +48,9 @@ struct FieldInfo
     bool saved = true;      // written to scene files
     bool visible = true;    // shown in the inspector
     AssetKind asset = AssetKind::None;  // String fields: a reference to an asset of this kind
-    bool color = false;                 // Vec3 fields: edited with a color picker
+    bool color = false;                 // Vec3/Vec4 fields: edited with a color picker
     bool joint = false;                 // String fields: a joint name of the parent's skeleton
+    std::vector<std::string> options{}; // Enum fields: the name of each value, from 0
 };
 
 // "radiansPerSec" -> "Radians Per Sec", "MeshRenderer" -> "Mesh Renderer"
@@ -92,6 +97,12 @@ constexpr FieldType fieldTypeOf()
         return FieldType::String;
     else if constexpr (std::is_same_v<T, entt::entity>)
         return FieldType::Entity;
+    else if constexpr (std::is_same_v<T, glm::vec2>)
+        return FieldType::Vec2;
+    else if constexpr (std::is_same_v<T, glm::vec4>)
+        return FieldType::Vec4;
+    else if constexpr (std::is_enum_v<T>)
+        return FieldType::Enum;
     else
         static_assert(!sizeof(T*), "unsupported field type");
 }
@@ -118,10 +129,18 @@ struct ComponentInfo
     {
         using Class = typename detail::MemberTraits<decltype(Member)>::ClassType;
         using Value = typename detail::MemberTraits<decltype(Member)>::ValueType;
-        fields.push_back({key, label, detail::fieldTypeOf<Value>(),
-                          [](const void* c) -> FieldValue { return static_cast<const Class*>(c)->*Member; },
-                          [](void* c, const FieldValue& v) { static_cast<Class*>(c)->*Member = std::get<Value>(v); },
-                          speed});
+        if constexpr (std::is_enum_v<Value>) {
+            fields.push_back(
+                {key, label, FieldType::Enum,
+                 [](const void* c) -> FieldValue { return static_cast<int>(static_cast<const Class*>(c)->*Member); },
+                 [](void* c, const FieldValue& v) { static_cast<Class*>(c)->*Member = static_cast<Value>(std::get<int>(v)); },
+                 speed});
+        } else {
+            fields.push_back({key, label, detail::fieldTypeOf<Value>(),
+                              [](const void* c) -> FieldValue { return static_cast<const Class*>(c)->*Member; },
+                              [](void* c, const FieldValue& v) { static_cast<Class*>(c)->*Member = std::get<Value>(v); },
+                              speed});
+        }
         return *this;
     }
 
@@ -163,6 +182,15 @@ struct ComponentInfo
     ComponentInfo& joint()
     {
         fields.back().joint = true;
+        return *this;
+    }
+    // Names the values of an enum or int field, which then saves and edits as an Enum
+    ComponentInfo& options(std::vector<std::string> names)
+    {
+        FieldInfo& field = fields.back();
+        if (field.type == FieldType::Int)
+            field.type = FieldType::Enum;
+        field.options = std::move(names);
         return *this;
     }
 

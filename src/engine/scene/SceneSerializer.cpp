@@ -5,6 +5,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <charconv>
 #include <cinttypes>
 #include <cmath>
@@ -61,8 +62,12 @@ static json toJson(const FieldValue& value, const Scene& scene)
             using T = std::decay_t<decltype(v)>;
             if constexpr (std::is_same_v<T, float>)
                 return jsonFloat(v);
+            else if constexpr (std::is_same_v<T, glm::vec2>)
+                return json::array({jsonFloat(v.x), jsonFloat(v.y)});
             else if constexpr (std::is_same_v<T, glm::vec3>)
                 return json::array({jsonFloat(v.x), jsonFloat(v.y), jsonFloat(v.z)});
+            else if constexpr (std::is_same_v<T, glm::vec4>)
+                return json::array({jsonFloat(v.x), jsonFloat(v.y), jsonFloat(v.z), jsonFloat(v.w)});
             else if constexpr (std::is_same_v<T, glm::quat>)
                 return json::array({jsonFloat(v.x), jsonFloat(v.y), jsonFloat(v.z), jsonFloat(v.w)});
             else if constexpr (std::is_same_v<T, entt::entity>)
@@ -85,10 +90,18 @@ static bool floatsFrom(const json& j, float* out, std::size_t count)
     return true;
 }
 
-// Every type except Entity, which is resolved once all entities of a load exist
-static bool fromJson(FieldType type, const json& j, FieldValue& out)
+// By name, so reordering the options doesn't change saved scenes; an index if it has none
+static json enumJson(const FieldInfo& field, int value)
 {
-    switch (type) {
+    if (value >= 0 && static_cast<std::size_t>(value) < field.options.size())
+        return field.options[static_cast<std::size_t>(value)];
+    return value;
+}
+
+// Every type except Entity, which is resolved once all entities of a load exist
+static bool fromJson(const FieldInfo& field, const json& j, FieldValue& out)
+{
+    switch (field.type) {
     case FieldType::Float:
         if (!j.is_number())
             return false;
@@ -109,6 +122,34 @@ static bool fromJson(FieldType type, const json& j, FieldValue& out)
             return false;
         out = j.get<std::string>();
         return true;
+    case FieldType::Enum:
+        if (j.is_number_integer()) {
+            out = j.get<int>();
+            return true;
+        }
+        if (j.is_string()) {
+            const auto& name = j.get_ref<const std::string&>();
+            const auto it = std::find(field.options.begin(), field.options.end(), name);
+            if (it == field.options.end())
+                return false;
+            out = static_cast<int>(it - field.options.begin());
+            return true;
+        }
+        return false;
+    case FieldType::Vec2: {
+        glm::vec2 v;
+        if (!floatsFrom(j, &v.x, 2))
+            return false;
+        out = v;
+        return true;
+    }
+    case FieldType::Vec4: {
+        glm::vec4 v;
+        if (!floatsFrom(j, &v.x, 4))
+            return false;
+        out = v;
+        return true;
+    }
     case FieldType::Vec3: {
         glm::vec3 v;
         if (!floatsFrom(j, &v.x, 3))
@@ -175,8 +216,11 @@ static json componentJson(const ComponentInfo& info, Scene& scene, entt::entity 
     json jsonComponent = json::object();
     if (const void* data = info.get(scene.registry(), e)) {
         for (const FieldInfo& field : info.fields) {
-            if (field.saved && field.set)
-                jsonComponent[field.key] = toJson(field.get(data), scene);
+            if (!field.saved || !field.set)
+                continue;
+            const FieldValue value = field.get(data);
+            jsonComponent[field.key] =
+                field.type == FieldType::Enum ? enumJson(field, std::get<int>(value)) : toJson(value, scene);
         }
     }
     return jsonComponent;
@@ -293,7 +337,7 @@ static void applyFields(const ComponentInfo& info, void* data, const json& jsonC
             continue;
         }
         FieldValue value;
-        if (fromJson(field.type, *it, value))
+        if (fromJson(field, *it, value))
             field.set(data, value);
         else
             std::fprintf(stderr, "Scene: bad value for %s.%s\n", info.id.c_str(), field.key.c_str());

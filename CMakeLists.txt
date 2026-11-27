@@ -91,9 +91,13 @@ set(WARNING_FLAGS "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,
 
 # Everything except the editor; must never link imgui
 add_library(engine STATIC
+        src/engine/anim/AnimAsset.cpp
+        src/engine/anim/AnimAsset.h
         src/engine/anim/AnimationSystem.cpp
         src/engine/anim/AnimationSystem.h
         src/engine/anim/Clip.h
+        src/engine/anim/Ik.cpp
+        src/engine/anim/Ik.h
         src/engine/anim/Pose.cpp
         src/engine/anim/Pose.h
         src/engine/anim/Skeleton.h
@@ -122,6 +126,8 @@ add_library(engine STATIC
         src/engine/assets/Primitives.h
         src/engine/core/InplaceFunction.h
         src/engine/core/Input.h
+        src/engine/core/LogCapture.cpp
+        src/engine/core/LogCapture.h
         src/engine/core/Paths.cpp
         src/engine/core/Paths.h
         src/engine/reflect/ComponentRegistry.h
@@ -198,6 +204,8 @@ if(BUILD_EDITOR)
             src/editor/AnimationViewer.h
             src/editor/AssetOps.cpp
             src/editor/AssetOps.h
+            src/editor/ConsolePanel.cpp
+            src/editor/ConsolePanel.h
             src/editor/DebugPanel.cpp
             src/editor/DebugPanel.h
             src/editor/DragDrop.h

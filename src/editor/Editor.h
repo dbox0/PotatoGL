@@ -2,6 +2,7 @@
 
 #include "engine/app/Overlay.h"
 #include "editor/AnimationViewer.h"
+#include "editor/ConsolePanel.h"
 #include "editor/DebugPanel.h"
 #include "editor/EditHistory.h"
 #include "editor/InspectorPanel.h"
@@ -34,6 +35,7 @@ private:
     SceneHierarchyPanel m_hierarchyPanel;
     InspectorPanel m_inspectorPanel;
     ProfilerPanel m_profilerPanel;
+    ConsolePanel m_consolePanel;
     ProjectPanel m_projectPanel;
     SceneViewPanel m_sceneView;
     ViewportPanel m_gameView{"Game"};
@@ -168,6 +170,8 @@ public:
     bool editorCameraInput() const override;
     bool gameInput() const override;
     bool visible() const override { return m_visible; }
+    bool gameViewRect(float& x, float& y, float& w, float& h) const override;
+    bool gameViewHovered() const override;
     Scene* activeScene() override { return m_viewer.isOpen() ? m_viewer.scene() : nullptr; }
     bool confirmQuit() override;
     bool quitRequested() const override { return m_quitNow; }

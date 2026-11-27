@@ -36,6 +36,9 @@ public:
     virtual bool editorCameraInput() const = 0;  // the editor camera may take clicks and keys
     virtual bool gameInput() const = 0;          // gameplay Input sees the keyboard
     virtual bool visible() const = 0;            // false: App draws the game camera to the window
+    // Where the game is shown, in window coordinates. false: it isn't shown.
+    virtual bool gameViewRect(float& x, float& y, float& w, float& h) const = 0;
+    virtual bool gameViewHovered() const = 0;    // gameplay Input sees mouse buttons over it
     // A scene of the overlay's own to animate, sync and render instead of the game's (a viewer);
     // nullptr for the game's. It's only evaluated: the game doesn't update it, time doesn't advance it.
     virtual Scene* activeScene() { return nullptr; }

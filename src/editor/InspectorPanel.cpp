@@ -16,6 +16,7 @@
 #include <cctype>
 #include <cstdio>
 #include <filesystem>
+#include <string>
 #include <utility>
 
 namespace fs = std::filesystem;
@@ -177,6 +178,35 @@ bool InspectorPanel::drawField(const FieldInfo& field, void* data)
         }
         break;
     }
+    case FieldType::Vec2: {
+        glm::vec2 v = std::get<glm::vec2>(value);
+        changed = ImGui::DragFloat2(field.label.c_str(), &v.x, field.speed);
+        value = v;
+        break;
+    }
+    case FieldType::Vec4: {
+        glm::vec4 v = std::get<glm::vec4>(value);
+        changed = field.color ? ImGui::ColorEdit4(field.label.c_str(), &v.x, ImGuiColorEditFlags_Float)
+                              : ImGui::DragFloat4(field.label.c_str(), &v.x, field.speed);
+        value = v;
+        break;
+    }
+    case FieldType::Enum: {
+        const int current = std::get<int>(value);
+        const bool known = current >= 0 && static_cast<std::size_t>(current) < field.options.size();
+        const std::string preview = known ? field.options[static_cast<std::size_t>(current)] : std::to_string(current);
+        if (ImGui::BeginCombo(field.label.c_str(), preview.c_str())) {
+            for (std::size_t i = 0; i < field.options.size(); ++i) {
+                const int option = static_cast<int>(i);
+                if (ImGui::Selectable(field.options[i].c_str(), option == current) && option != current) {
+                    value = option;
+                    changed = true;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        break;
+    }
     case FieldType::Quat: {
         const glm::quat q = std::get<glm::quat>(value);
         ImGui::LabelText(field.label.c_str(), "%.3f %.3f %.3f %.3f", q.x, q.y, q.z, q.w);
@@ -288,7 +318,7 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 ImGui::PushID(field.key.c_str());
                 const FieldValue before = field.get(data);
                 const bool changed = drawField(field, data);
-                if (field.asset != AssetKind::None || field.joint) {
+                if (field.asset != AssetKind::None || field.joint || field.type == FieldType::Enum) {
                     // Drops and picks are complete edits as they happen
                     if (changed)
                         m_history->push(setFieldCommand(scene, e, info, field, before, field.get(data)));

@@ -3,6 +3,7 @@
 
 #ifdef WITH_EDITOR
 #include "editor/Editor.h"
+#include "engine/core/LogCapture.h"
 #endif
 
 #include <cstdlib>
@@ -10,6 +11,13 @@
 
 int main(int, char**)
 {
+#ifdef WITH_EDITOR
+    logcapture::start();
+    struct StopCapture
+    {
+        ~StopCapture() { logcapture::stop(); }
+    } stopCapture;
+#endif
     App app;
     app.setGame(std::make_unique<Gameplay>());
 #ifdef WITH_EDITOR

@@ -56,12 +56,4 @@ imgui.ini
 # OS
 .DS_Store
 Thumbs.db
-assets/Cube.prefab
-assets/Duck.prefab
-assets/New Material 1.mat
-assets/New Material.mat
-assets/PrefabTest.prefab
-assets/Scenes/Main.scene
-assets/scenes/Main.scene
-assets/Scenes/Test.scene
-assets/scenes/Test.scene
+assets/*
