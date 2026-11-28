@@ -13,6 +13,8 @@
 
 // Loads each asset path once and hands out its renderer handle. Failures are cached too,
 // so a bad path costs one attempt, not one per frame. Paths are resource-relative.
+class Font;
+
 class AssetCache
 {
 public:
@@ -54,6 +56,7 @@ private:
     std::unordered_map<std::string, Texture2D> m_textures2D;
     std::unordered_map<TextureId, const SpriteInfo*> m_spriteInfo;  // into m_textures2D's nodes, which don't move
     std::chrono::steady_clock::time_point m_lastTexturePoll;
+    std::unordered_map<std::string, std::unique_ptr<Font>> m_fonts;  // nullptr = failed
 
     bool loadTexture2D(const std::string& path, Texture2D& entry);
 
@@ -86,8 +89,17 @@ public:
     SpriteMeta spriteMeta(const std::string& path);
     // Applies right away; save also writes the .meta
     void setSpriteMeta(const std::string& path, const SpriteMeta& meta, bool save);
+    // .ttf / .otf; empty = DefaultFont. nullptr if it can't be loaded.
+    Font* font(const std::string& path);
+    static constexpr const char* DefaultFont = "assets/Fonts/NotoSans-Regular.ttf";
+
     void pollTextureChanges();  // cheap to call every frame, checks file times twice a second
-    void releaseTextures();     // before the GL context is destroyed
+    void releaseTextures();     // and fonts; before the GL context is destroyed
+
+    AssetCache();
+    ~AssetCache();
+    AssetCache(const AssetCache&) = delete;
+    AssetCache& operator=(const AssetCache&) = delete;
 
     // A .mat file; InvalidMaterial if it can't be loaded
     MaterialId material(const std::string& path);

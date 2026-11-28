@@ -224,6 +224,8 @@ void Editor::update(const OverlayContext& context)
                             m_inPrefab ? assetops::toRef(context.scene.path()) : std::string());
     m_actions.setAssets(&context.assets);
     m_actions.apply(edit, m_history, m_selection, spawnPoint(context));
+    if (m_actions.takeCreatedUi())
+        m_canvasPanel.focus();
     syncSelectedTag(context.scene.registry());
 }
 
@@ -444,6 +446,8 @@ void Editor::drawMenuBar(const OverlayContext& context)
     if (ImGui::BeginMenu("Window")) {
         ImGui::MenuItem("Profiler", nullptr, &m_profilerPanel.open());
         ImGui::MenuItem("Console", nullptr, &m_consolePanel.open());
+        if (ImGui::MenuItem("Canvas", nullptr, m_canvasPanel.open()))
+            m_canvasPanel.focus();
         ImGui::Separator();
         if (ImGui::MenuItem("Reset Layout"))
             m_resetLayout = true;
@@ -898,6 +902,8 @@ void Editor::handleInspectorRequests(const OverlayContext& context)
         request(context, Pending::OpenPrefab, requests.openPrefab);
     if (!requests.instantiate.empty())
         m_actions.instantiate(requests.instantiate);
+    if (requests.editCanvas)
+        m_canvasPanel.focus();
     if (requests.openAnimationViewer)
         openAnimationViewer(context, requests.openAnimationViewer->model, requests.openAnimationViewer->material,
                             requests.openAnimationViewer->clip);

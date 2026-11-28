@@ -1,0 +1,236 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "uuid": "e8e25d940ed90475",
+      "components": {
+        "Name": {
+          "value": "Progress Bar"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "RectTransform": {
+          "anchorMin": [
+            0.0,
+            0.0
+          ],
+          "anchorMax": [
+            0.0,
+            0.0
+          ],
+          "pivot": [
+            0.0,
+            0.0
+          ],
+          "anchoredPosition": [
+            24.0,
+            24.0
+          ],
+          "sizeDelta": [
+            400.0,
+            36.0
+          ],
+          "rotationDeg": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ]
+        },
+        "UIShape": {
+          "shape": "RoundedRect",
+          "color": [
+            0.08,
+            0.08,
+            0.1,
+            0.85
+          ],
+          "cornerRadius": 10.0,
+          "borderWidth": 2.0,
+          "borderColor": [
+            0.0,
+            0.0,
+            0.0,
+            0.9
+          ],
+          "lineWidth": 2.0
+        },
+        "UIBar": {
+          "fill": "36f675cc81e74ef5",
+          "label": "1600a35a099950d8",
+          "labelFormat": "{2}%",
+          "value": 0.0,
+          "max": 1.0,
+          "listen": "Progress",
+          "smoothing": 10.0,
+          "lowColor": [
+            0.9,
+            0.2,
+            0.2,
+            1.0
+          ],
+          "highColor": [
+            0.2,
+            0.9,
+            0.3,
+            1.0
+          ],
+          "gradient": false
+        }
+      }
+    },
+    {
+      "uuid": "36f675cc81e74ef5",
+      "parent": "e8e25d940ed90475",
+      "components": {
+        "Name": {
+          "value": "Fill"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "RectTransform": {
+          "anchorMin": [
+            0.0,
+            0.0
+          ],
+          "anchorMax": [
+            1.0,
+            1.0
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "anchoredPosition": [
+            0.0,
+            0.0
+          ],
+          "sizeDelta": [
+            -10.0,
+            -10.0
+          ],
+          "rotationDeg": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ]
+        },
+        "UIImage": {
+          "sprite": "",
+          "color": [
+            0.3,
+            0.6,
+            1.0,
+            1.0
+          ],
+          "type": "Filled",
+          "fillAmount": 1.0,
+          "fillMethod": "Horizontal",
+          "fillOrigin": "LeftOrBottom",
+          "preserveAspect": false
+        }
+      }
+    },
+    {
+      "uuid": "1600a35a099950d8",
+      "parent": "e8e25d940ed90475",
+      "components": {
+        "Name": {
+          "value": "Label"
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "RectTransform": {
+          "anchorMin": [
+            0.0,
+            0.0
+          ],
+          "anchorMax": [
+            1.0,
+            1.0
+          ],
+          "pivot": [
+            0.5,
+            0.5
+          ],
+          "anchoredPosition": [
+            0.0,
+            0.0
+          ],
+          "sizeDelta": [
+            0.0,
+            0.0
+          ],
+          "rotationDeg": 0.0,
+          "scale": [
+            1.0,
+            1.0
+          ]
+        },
+        "UIText": {
+          "text": "",
+          "font": "",
+          "fontSize": 22.0,
+          "color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "alignH": "Center",
+          "alignV": "Middle",
+          "wrap": false,
+          "overflow": "Overflow",
+          "lineSpacing": 1.0
+        }
+      }
+    }
+  ]
+}

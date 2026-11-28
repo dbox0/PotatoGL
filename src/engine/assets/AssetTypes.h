@@ -24,6 +24,7 @@ enum class AssetKind
     Pose,
     Script,
     Shader,
+    Font,
     Other,
 };
 

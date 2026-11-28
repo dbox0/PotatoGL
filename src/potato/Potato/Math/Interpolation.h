@@ -1,13 +1,11 @@
 #pragma once
 
-#include <glm/glm.hpp>
-#include <glm/gtc/constants.hpp>
-#include <glm/gtc/quaternion.hpp>
+#include "Potato/Math/Types.h"
 
 #include <algorithm>
 #include <cmath>
 
-namespace Math
+namespace potato::Math
 {
 
 inline constexpr float QuatLinearThreshold = 0.9995f;
@@ -44,11 +42,11 @@ constexpr float smootherstep(float t)
 // Radians, takes the short way around
 inline float lerpAngle(float a, float b, float t)
 {
-    return a + std::remainder(b - a, glm::two_pi<float>()) * t;
+    return a + std::remainder(b - a, TwoPi) * t;
 }
 
 // Shortest path, renormalized
-inline glm::quat nlerp(const glm::quat& a, glm::quat b, float t)
+inline Quat nlerp(const Quat& a, Quat b, float t)
 {
     if (glm::dot(a, b) < 0.0f)
         b = -b;
@@ -56,7 +54,7 @@ inline glm::quat nlerp(const glm::quat& a, glm::quat b, float t)
 }
 
 // Shortest path, constant angular velocity
-inline glm::quat slerp(const glm::quat& a, glm::quat b, float t)
+inline Quat slerp(const Quat& a, Quat b, float t)
 {
     float d = glm::dot(a, b);
     if (d < 0.0f)
@@ -72,17 +70,17 @@ inline glm::quat slerp(const glm::quat& a, glm::quat b, float t)
 }
 
 // Unit vectors, rotates a towards b along the great circle
-inline glm::vec3 slerp(const glm::vec3& a, const glm::vec3& b, float t)
+inline Vec3 slerp(const Vec3& a, const Vec3& b, float t)
 {
     const float d = std::clamp(glm::dot(a, b), -1.0f, 1.0f);
     if (d > QuatLinearThreshold)
         return glm::normalize(lerp(a, b, t));
-    glm::vec3 ortho = b - a * d;
+    Vec3 ortho = b - a * d;
     const float len2 = glm::dot(ortho, ortho);
     if (len2 < 1e-12f)
     {
         // Antiparallel: any perpendicular axis will do
-        ortho = glm::cross(a, std::abs(a.x) < 0.9f ? glm::vec3(1, 0, 0) : glm::vec3(0, 1, 0));
+        ortho = glm::cross(a, std::abs(a.x) < 0.9f ? Vec3(1, 0, 0) : Vec3(0, 1, 0));
         ortho = glm::normalize(ortho);
     }
     else
@@ -92,7 +90,7 @@ inline glm::vec3 slerp(const glm::vec3& a, const glm::vec3& b, float t)
 }
 
 // Angle in radians of the rotation taking a to b
-inline float angleBetween(const glm::quat& a, const glm::quat& b)
+inline float angleBetween(const Quat& a, const Quat& b)
 {
     const float d = std::min(std::abs(glm::dot(a, b)), 1.0f);
     return 2.0f * std::acos(d);
@@ -105,7 +103,7 @@ T damp(const T& current, const T& target, float lambda, float dt)
     return lerp(current, target, 1.0f - std::exp(-lambda * dt));
 }
 
-inline glm::quat damp(const glm::quat& current, const glm::quat& target, float lambda, float dt)
+inline Quat damp(const Quat& current, const Quat& target, float lambda, float dt)
 {
     return slerp(current, target, 1.0f - std::exp(-lambda * dt));
 }
@@ -127,7 +125,7 @@ glm::vec<L, float> moveTowards(const glm::vec<L, float>& current, const glm::vec
 }
 
 // maxAngle in radians
-inline glm::quat rotateTowards(const glm::quat& current, const glm::quat& target, float maxAngle)
+inline Quat rotateTowards(const Quat& current, const Quat& target, float maxAngle)
 {
     const float angle = angleBetween(current, target);
     if (angle <= maxAngle || angle < 1e-6f)
@@ -166,4 +164,4 @@ constexpr T cubicBezier(const T& p0, const T& p1, const T& p2, const T& p3, floa
     return p0 * (u * u * u) + p1 * (3.0f * u * u * t) + p2 * (3.0f * u * t * t) + p3 * (t * t * t);
 }
 
-} 
+} // namespace potato::Math

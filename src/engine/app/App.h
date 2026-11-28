@@ -10,6 +10,7 @@
 #include "engine/render/UIRenderer.h"
 #include "engine/scene/Camera.h"
 #include "engine/scene/Scene.h"
+#include "engine/ui/UiSystems.h"
 
 #include <SDL3/SDL.h>
 
@@ -29,6 +30,7 @@ private:
     std::unique_ptr<Overlay> m_overlay;
     std::unique_ptr<Game> m_game;
     Scene m_scene;
+    UiBarSystem m_uiBars;  // after m_scene: disconnects from its bus first
     PlayMode m_playMode = PlayMode::Play;
     PlayMode m_lastPlayMode = PlayMode::Play;
     bool m_animationPreview = false;
@@ -50,6 +52,7 @@ private:
     void resolveUiImages(Scene& scene);
     void renderToWindow();
     void updateInput();
+    bool gameViewSize(glm::vec2& size) const;
 
 public:
     App() = default;

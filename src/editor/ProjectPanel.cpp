@@ -63,6 +63,7 @@ static ImU32 kindColor(AssetKind kind)
     case AssetKind::Shader:   return IM_COL32(220, 120, 90, 255);
     case AssetKind::Animation: return IM_COL32(230, 150, 60, 255);
     case AssetKind::Pose:     return IM_COL32(220, 190, 90, 255);
+    case AssetKind::Font:     return IM_COL32(200, 200, 210, 255);
     default:                  return IM_COL32(130, 130, 135, 255);
     }
 }
@@ -73,6 +74,7 @@ static std::string kindTag(AssetKind kind, const fs::path& file)
     case AssetKind::Scene:    return "SCENE";
     case AssetKind::Prefab:   return "PREFAB";
     case AssetKind::Material: return "MAT";
+    case AssetKind::Font:     return "FONT";
     case AssetKind::Script:   return "C++";
     case AssetKind::Shader:   return "GLSL";
     default: {

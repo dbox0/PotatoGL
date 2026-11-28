@@ -11,7 +11,7 @@ class Scene;
 
 // A prefab is a saved object tree (.prefab, in the scene format). Its instances are copies
 // whose root carries PrefabInstance, rebuilt from the file when it changes. Only the
-// instance root's Name and Transform are the instance's own; anything else edited on an
+// instance root's Name, Transform and RectTransform are the instance's own; anything else edited on an
 // instance is replaced by the prefab's contents on the next rebuild.
 // Each instance object's uuid comes from the instance root's uuid and the prefab object's,
 // so a rebuild keeps the uuids (selection, undo, references) of objects still in the prefab.

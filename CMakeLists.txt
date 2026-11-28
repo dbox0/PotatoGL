@@ -83,11 +83,21 @@ target_include_directories(cgltf SYSTEM PUBLIC ${cgltf_SOURCE_DIR})
 add_library(ufbx STATIC ${ufbx_SOURCE_DIR}/ufbx.c)
 target_include_directories(ufbx SYSTEM PUBLIC ${ufbx_SOURCE_DIR})
 
-add_library(stb_image STATIC src/third_party/stb_image_impl.c)
+add_library(stb_image STATIC src/third_party/stb_image_impl.c src/third_party/stb_truetype_impl.c)
 target_include_directories(stb_image SYSTEM PUBLIC ${stb_SOURCE_DIR})
 
 
 set(WARNING_FLAGS "$<IF:$<STREQUAL:${CMAKE_CXX_COMPILER_FRONTEND_VARIANT},MSVC>,/W4;/permissive-,-Wall;-Wextra;-Wpedantic>")
+
+# Public SDK headers for user scripts: #include <Potato/Math.h>
+add_library(PotatoMath INTERFACE
+        src/potato/Potato/Math.h
+        src/potato/Potato/Math/Interpolation.h
+        src/potato/Potato/Math/Types.h)
+add_library(Potato::Math ALIAS PotatoMath)
+target_include_directories(PotatoMath INTERFACE src/potato)
+target_link_libraries(PotatoMath INTERFACE glm::glm)
+target_compile_features(PotatoMath INTERFACE cxx_std_20)
 
 # Everything except the editor; must never link imgui
 add_library(engine STATIC
@@ -184,15 +194,21 @@ add_library(engine STATIC
         src/engine/script/ScriptRunner.cpp
         src/engine/script/EventListeners.h
         src/engine/script/ScriptRunner.h
+        src/engine/ui/Font.cpp
+        src/engine/ui/Font.h
         src/engine/ui/UiComponents.h
         src/engine/ui/UiHitTest.cpp
         src/engine/ui/UiHitTest.h
         src/engine/ui/UiLayout.cpp
         src/engine/ui/UiLayout.h
         src/engine/ui/UiReflection.cpp
-        src/engine/ui/UiReflection.h)
+        src/engine/ui/UiReflection.h
+        src/engine/ui/UiSystems.cpp
+        src/engine/ui/UiSystems.h
+        src/engine/ui/UiText.cpp
+        src/engine/ui/UiText.h)
 target_include_directories(engine PUBLIC src)
-target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm PRIVATE cgltf ufbx stb_image nlohmann_json::nlohmann_json)
+target_link_libraries(engine PUBLIC glad EnTT::EnTT SDL3::SDL3 glm::glm Potato::Math PRIVATE cgltf ufbx stb_image nlohmann_json::nlohmann_json)
 # Debug and editor builds read the source tree, so shader edits hot reload and the editor's
 # Project view edits the real assets, not the copy next to the executable
 target_compile_definitions(engine PRIVATE "$<$<OR:$<CONFIG:Debug>,$<BOOL:${BUILD_EDITOR}>>:DEV_RESOURCE_DIR=\"${CMAKE_SOURCE_DIR}/\">")

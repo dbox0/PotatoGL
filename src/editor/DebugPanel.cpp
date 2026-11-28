@@ -3,6 +3,7 @@
 #include "engine/app/CameraController.h"
 #include "engine/app/Overlay.h"
 #include "engine/render/Renderer.h"
+#include "engine/render/UIRenderer.h"
 #include "engine/scene/Camera.h"
 
 #include <glad/gl.h>
@@ -68,6 +69,12 @@ void DebugPanel::draw(const OverlayContext& context)
             Renderer::ShadowSettings& shadows = renderer.shadowSettings();
             ImGui::Checkbox("Shadows", &shadows.enabled);
             ImGui::SliderFloat("Shadow distance", &shadows.distance, 5.0f, 100.0f, "%.0f m");
+        }
+
+        if (ImGui::CollapsingHeader("UI", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const UIRenderer::Stats ui = context.ui.frameStats();
+            ImGui::Text("%zu vertices, %zu batches", ui.vertices, ui.batches);
+            ImGui::TextDisabled("Every UI view of the last frame");
         }
 
         if (ImGui::CollapsingHeader("Shaders", ImGuiTreeNodeFlags_DefaultOpen)) {

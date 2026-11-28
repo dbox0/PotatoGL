@@ -31,6 +31,10 @@ enum class CreateKind
     UIPanel,
     UIShape,
     UIImage,
+    UIText,
+    UIButton,
+    UISlider,
+    UIHealthBar,
 };
 
 // Object-level edits asked for by menus, shortcuts and the hierarchy. Requests made while
@@ -84,6 +88,7 @@ private:
     std::vector<Copied> m_clipboard;
     entt::entity m_topParent = entt::null;
     std::string m_openPrefab;  // can't be instantiated inside itself
+    bool m_createdUi = false;
     AssetCache* m_assets = nullptr;
 
     // requested if valid, else where top-level objects go
@@ -108,6 +113,8 @@ public:
     void paste()     { m_requests.push_back({Type::Paste}); }
     void remove()    { m_requests.push_back({Type::Delete}); }
     bool canPaste() const { return !m_clipboard.empty(); }
+    // A GameObject > UI item ran since the last call
+    bool takeCreatedUi() { return std::exchange(m_createdUi, false); }
 
     // A model (as a MeshRenderer) or a prefab; parent = entt::null: top level
     void instantiate(std::string asset, entt::entity parent = entt::null, Placement placement = Placement::Spawn,

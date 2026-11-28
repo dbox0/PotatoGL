@@ -44,6 +44,7 @@ struct SpriteRenderer
     bool lit = false;            // diffuse lighting from the sun, lights and ambient
     bool receiveShadows = true;  // only when lit
     TextureId texture = InvalidTexture;  // runtime, reset whenever sprite changes
+    glm::vec2 drawnSize{0.0f};           // runtime: the size last submitted, for the editor
 };
 
 // On the root of a prefab instance: the .prefab it's rebuilt from when that changes

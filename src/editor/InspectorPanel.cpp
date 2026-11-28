@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -106,6 +107,77 @@ bool InspectorPanel::assetSlot(const char* label, AssetKind kind, std::string& v
     return changed;
 }
 
+// A scene object reference: shows its name, takes drops from the Hierarchy, and has a picker
+bool InspectorPanel::entitySlot(const char* label, entt::entity& value)
+{
+    const entt::registry& registry = m_scene->registry();
+    const auto nameOf = [&](entt::entity e) {
+        const Name* name = registry.try_get<Name>(e);
+        return name && !name->value.empty() ? name->value : std::string("Object");
+    };
+    const bool valid = value != entt::null && registry.valid(value);
+    bool changed = false;
+    ImGui::PushID(label);
+    const ImGuiStyle& style = ImGui::GetStyle();
+    const float pickerWidth = ImGui::GetFrameHeight();
+    const float width = std::max(ImGui::CalcItemWidth() - pickerWidth - style.ItemInnerSpacing.x, 20.0f);
+    const std::string shown = valid ? nameOf(value) : std::string("None (Object)");
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_Button, style.Colors[ImGuiCol_FrameBg]);
+    ImGui::Button((shown + "##slot").c_str(), ImVec2(width, 0.0f));
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(EntityPayload)) {
+            entt::entity dropped;
+            std::memcpy(&dropped, payload->Data, sizeof(dropped));
+            changed = dropped != value;
+            value = dropped;
+        }
+        ImGui::EndDragDropTarget();
+    }
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    if (ImGui::Button("o", ImVec2(pickerWidth, 0.0f))) {
+        m_pickerFilter[0] = '\0';
+        ImGui::OpenPopup("##entityPicker");
+    }
+    ImGui::SetItemTooltip("Select an object, or drag one here from the Hierarchy");
+    ImGui::SameLine(0.0f, style.ItemInnerSpacing.x);
+    ImGui::TextUnformatted(label);
+
+    if (ImGui::BeginPopup("##entityPicker")) {
+        if (ImGui::IsWindowAppearing())
+            ImGui::SetKeyboardFocusHere();
+        ImGui::SetNextItemWidth(320.0f);
+        ImGui::InputTextWithHint("##filter", "Search", m_pickerFilter, sizeof(m_pickerFilter));
+        if (ImGui::BeginChild("##items", ImVec2(320.0f, 240.0f))) {
+            if (ImGui::Selectable("None", !valid)) {
+                changed = valid;
+                value = entt::null;
+                ImGui::CloseCurrentPopup();
+            }
+            for (const entt::entity e : registry.view<Name>()) {
+                if (e == m_scene->root())
+                    continue;
+                const std::string name = nameOf(e);
+                if (m_pickerFilter[0] && !containsNoCase(name, m_pickerFilter))
+                    continue;
+                ImGui::PushID(static_cast<int>(entt::to_integral(e)));
+                if (ImGui::Selectable(name.c_str(), e == value)) {
+                    changed = e != value;
+                    value = e;
+                    ImGui::CloseCurrentPopup();
+                }
+                ImGui::PopID();
+            }
+        }
+        ImGui::EndChild();
+        ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    return changed;
+}
+
 bool InspectorPanel::drawField(const FieldInfo& field, void* data)
 {
     FieldValue value = field.get(data);
@@ -163,13 +235,17 @@ bool InspectorPanel::drawField(const FieldInfo& field, void* data)
         }
         // Committed on Enter or focus loss, so e.g. a mesh path isn't loaded per keystroke.
         // Only one text field is active at a time; it edits s_editBuffer.
-        static char s_editBuffer[256];
+        static char s_editBuffer[2048];
         static ImGuiID s_editId = 0;
         const ImGuiID id = ImGui::GetID(field.label.c_str());
-        char local[256];
+        char local[2048];
         std::snprintf(local, sizeof(local), "%s", std::get<std::string>(value).c_str());
         char* buffer = id == s_editId ? s_editBuffer : local;
-        ImGui::InputText(field.label.c_str(), buffer, sizeof(local));
+        if (field.multiline)
+            ImGui::InputTextMultiline(field.label.c_str(), buffer, sizeof(local),
+                                      ImVec2(0.0f, ImGui::GetTextLineHeight() * 4.0f + ImGui::GetStyle().FramePadding.y * 2.0f));
+        else
+            ImGui::InputText(field.label.c_str(), buffer, sizeof(local));
         if (ImGui::IsItemActivated()) {
             std::snprintf(s_editBuffer, sizeof(s_editBuffer), "%s", local);
             s_editId = id;
@@ -217,11 +293,9 @@ bool InspectorPanel::drawField(const FieldInfo& field, void* data)
         break;
     }
     case FieldType::Entity: {
-        const entt::entity v = std::get<entt::entity>(value);
-        if (v == entt::null)
-            ImGui::LabelText(field.label.c_str(), "None");
-        else
-            ImGui::LabelText(field.label.c_str(), "Entity %u", static_cast<unsigned>(entt::to_integral(v)));
+        entt::entity v = std::get<entt::entity>(value);
+        changed = entitySlot(field.label.c_str(), v);
+        value = v;
         break;
     }
     }
@@ -239,6 +313,7 @@ void InspectorPanel::draw(Scene& scene, const ComponentRegistry& components, ent
     m_history = &history;
     m_assets = &assets;
     m_components = &components;
+    m_scene = &scene;
     entt::registry& registry = scene.registry();
     if (ImGui::Begin("Inspector")) {
         if ((selected == entt::null || !registry.valid(selected)) && !asset.empty()) {
@@ -310,8 +385,14 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                     m_jointNames = skeleton->names;
             }
         }
-        if (info.id == "RectTransform")
-            drawAnchorPresets(info, scene, e);
+        if (info.id == "RectTransform" || info.id == "Canvas") {
+            if (info.id == "RectTransform") {
+                drawAnchorPresets(info, scene, e);
+                ImGui::SameLine();
+            }
+            if (ImGui::Button("Edit in Canvas"))
+                m_requests.editCanvas = true;
+        }
         const bool driven = info.id == "Transform" && registry.all_of<BoneSocket>(e);
         if (driven)
             ImGui::TextDisabled("Driven by the Bone Socket");
@@ -329,7 +410,8 @@ void InspectorPanel::drawComponent(const ComponentInfo& info, Scene& scene, entt
                 ImGui::PushID(field.key.c_str());
                 const FieldValue before = field.get(data);
                 const bool changed = drawField(field, data);
-                if (field.asset != AssetKind::None || field.joint || field.type == FieldType::Enum) {
+                if (field.asset != AssetKind::None || field.joint || field.type == FieldType::Enum ||
+                    field.type == FieldType::Entity) {
                     // Drops and picks are complete edits as they happen
                     if (changed)
                         m_history->push(setFieldCommand(scene, e, info, field, before, field.get(data)));

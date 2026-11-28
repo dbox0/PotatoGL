@@ -11,9 +11,11 @@
 #include <memory>
 #include <vector>
 
+class AssetCache;
 class RenderTarget;
 class Scene;
 struct UIImage;
+struct UIText;
 struct UIRect;
 struct UIShape;
 
@@ -61,14 +63,19 @@ private:
     GLint m_targetSizeLocation = -1;
     std::vector<Vertex> m_vertices;
     std::vector<Batch> m_batches;
+    std::vector<Vertex> m_textVertices;  // scratch
     glm::vec2 m_targetSize{1.0f};
     Stats m_stats;
+    Stats m_frame;      // since beginFrame()
+    Stats m_lastFrame;
+    AssetCache* m_assets = nullptr;
     std::chrono::steady_clock::time_point m_lastShaderPoll;
 
     UIRenderer() = default;
-    void drawElement(const Scene& scene, entt::entity e);
-    void drawShape(const UIShape& shape, const UIRect& rect);
-    void drawImage(const UIImage& image, const UIRect& rect);
+    void drawElement(Scene& scene, entt::entity e);
+    void drawShape(const UIShape& shape, const UIRect& rect, const glm::vec4& tint);
+    void drawImage(const UIImage& image, const UIRect& rect, const glm::vec4& tint);
+    void drawText(Scene& scene, entt::entity e, const UIText& text, const UIRect& rect, const glm::vec4& tint);
     // Quad from local min to max with uvs from uvMin to uvMax
     void imageQuad(GLuint texture, const UIRect& rect, glm::vec2 min, glm::vec2 max, glm::vec2 uvMin, glm::vec2 uvMax,
                    std::uint32_t color);
@@ -83,14 +90,19 @@ public:
 
     static std::uint32_t packColor(const glm::vec4& color);
 
+    void setAssets(AssetCache* assets) { m_assets = assets; }  // fonts; no text without it
+
+    void beginFrame();  // once per frame, for frameStats()
     void begin(glm::vec2 targetSize);
-    void drawCanvas(const Scene& scene, entt::entity canvas);  // walks the UIRects
-    void drawCanvases(const Scene& scene);                       // every canvas, in sortOrder
+    // Walks the UIRects; lays out text, so not const
+    void drawCanvas(Scene& scene, entt::entity canvas);
+    void drawCanvases(Scene& scene);  // every canvas, in sortOrder
     // texture 0 for untextured modes; never breaks a batch
     void addTriangles(GLuint texture, const Vertex* vertices, std::size_t count);
     // target = nullptr: the window's framebuffer
     void end(const RenderTarget* target, int width, int height);
 
     void pollShaderChanges();
-    Stats stats() const { return m_stats; }  // last end()
+    Stats stats() const { return m_stats; }           // last end()
+    Stats frameStats() const { return m_lastFrame; }  // every end() of the previous frame
 };

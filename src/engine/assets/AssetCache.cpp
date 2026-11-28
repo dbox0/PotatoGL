@@ -4,6 +4,7 @@
 #include "engine/assets/Model.h"
 #include "engine/assets/Primitives.h"
 #include "engine/core/Paths.h"
+#include "engine/ui/Font.h"
 
 #include "engine/anim/AnimAsset.h"
 #include "engine/assets/AssetTypes.h"
@@ -299,8 +300,23 @@ void AssetCache::pollTextureChanges()
     }
 }
 
+AssetCache::AssetCache() = default;
+AssetCache::~AssetCache() = default;
+
+Font* AssetCache::font(const std::string& path)
+{
+    const std::string& ref = path.empty() ? std::string(DefaultFont) : path;
+    if (const auto it = m_fonts.find(ref); it != m_fonts.end())
+        return it->second.get();
+    std::unique_ptr<Font> font = Font::load(resourcePath(ref));
+    if (!font)
+        std::fprintf(stderr, "Can't load font %s\n", ref.c_str());
+    return (m_fonts[ref] = std::move(font)).get();
+}
+
 void AssetCache::releaseTextures()
 {
+    m_fonts.clear();
     for (auto& [path, entry] : m_textures2D)
         glDeleteTextures(1, &entry.id);
     m_textures2D.clear();

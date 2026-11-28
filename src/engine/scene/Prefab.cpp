@@ -5,6 +5,9 @@
 #include "engine/scene/Scene.h"
 #include "engine/scene/SceneSerializer.h"
 #include "engine/scene/Transform.h"
+#include "engine/ui/UiComponents.h"
+
+#include <optional>
 
 #include <algorithm>
 #include <fstream>
@@ -14,6 +17,19 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+// A UI instance root's placement is its own, like a Transform
+static std::optional<RectTransform> rectTransformOf(const entt::registry& registry, entt::entity e)
+{
+    const RectTransform* rect = registry.try_get<RectTransform>(e);
+    return rect ? std::optional<RectTransform>(*rect) : std::nullopt;
+}
+
+static void restoreRectTransform(entt::registry& registry, entt::entity e, const std::optional<RectTransform>& rect)
+{
+    if (rect && registry.all_of<RectTransform>(e))
+        registry.get<RectTransform>(e) = *rect;
+}
 
 namespace
 {
@@ -94,6 +110,7 @@ entt::entity instantiate(Scene& scene, const ComponentRegistry& components, cons
         const std::size_t nestedIndex = scene.siblingIndex(nested);
         const std::uint64_t uuid = scene.uuidOf(nested);
         const Transform transform = registry.get<Transform>(nested);
+        const std::optional<RectTransform> rect = rectTransformOf(registry, nested);
         const std::string name = registry.get<Name>(nested).value;
         if (!readPrefab(nestedRef) || std::find(chain.begin(), chain.end(), nestedRef) != chain.end())
             continue;
@@ -103,6 +120,7 @@ entt::entity instantiate(Scene& scene, const ComponentRegistry& components, cons
         if (rebuilt == entt::null)
             continue;
         registry.get<Transform>(rebuilt) = transform;
+        restoreRectTransform(registry, rebuilt, rect);
         registry.get<Name>(rebuilt).value = name;
     }
     chain.pop_back();
@@ -153,6 +171,7 @@ int refreshPrefabInstances(Scene& scene, const ComponentRegistry& components, co
         const std::size_t index = scene.siblingIndex(e);
         const std::uint64_t uuid = scene.uuidOf(e);
         const Transform transform = registry.get<Transform>(e);
+        const std::optional<RectTransform> rect = rectTransformOf(registry, e);
         const std::string name = registry.get<Name>(e).value;
         std::vector<entt::entity> tree;
         collectTree(scene, e, tree);
@@ -164,6 +183,7 @@ int refreshPrefabInstances(Scene& scene, const ComponentRegistry& components, co
         if (rebuilt == entt::null)
             continue;
         registry.get<Transform>(rebuilt) = transform;
+        restoreRectTransform(registry, rebuilt, rect);
         registry.get<Name>(rebuilt).value = name;
         if (saveEntityTree(scene, components, rebuilt) != before)
             ++changed;

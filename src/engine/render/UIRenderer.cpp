@@ -1,11 +1,14 @@
 #include "UIRenderer.h"
 
+#include "engine/assets/AssetCache.h"
 #include "engine/core/Paths.h"
 #include "engine/gfx/RenderTarget.h"
 #include "engine/scene/Components.h"
 #include "engine/scene/Scene.h"
 #include "engine/ui/UiComponents.h"
+#include "engine/ui/Font.h"
 #include "engine/ui/UiLayout.h"
+#include "engine/ui/UiText.h"
 
 #include <algorithm>
 #include <cmath>
@@ -65,6 +68,12 @@ std::uint32_t UIRenderer::packColor(const glm::vec4& color)
     return byte(color.r) | byte(color.g) << 8 | byte(color.b) << 16 | byte(color.a) << 24;
 }
 
+void UIRenderer::beginFrame()
+{
+    m_lastFrame = m_frame;
+    m_frame = {};
+}
+
 void UIRenderer::begin(glm::vec2 targetSize)
 {
     m_targetSize = targetSize;
@@ -85,34 +94,67 @@ void UIRenderer::addTriangles(GLuint texture, const Vertex* vertices, std::size_
     batch.count += static_cast<GLsizei>(count);
 }
 
-void UIRenderer::drawCanvases(const Scene& scene)
+void UIRenderer::drawCanvases(Scene& scene)
 {
     for (const entt::entity canvas : uiCanvases(scene))
         drawCanvas(scene, canvas);
 }
 
-void UIRenderer::drawCanvas(const Scene& scene, entt::entity canvas)
+void UIRenderer::drawCanvas(Scene& scene, entt::entity canvas)
 {
     if (scene.registry().all_of<Canvas, UIRect>(canvas))
         drawElement(scene, canvas);
 }
 
 // Same walk as uiLayoutSystem, so a stale UIRect (disabled since) is never drawn
-void UIRenderer::drawElement(const Scene& scene, entt::entity e)
+void UIRenderer::drawElement(Scene& scene, entt::entity e)
 {
-    const entt::registry& registry = scene.registry();
-    const UIRect& rect = registry.get<UIRect>(e);
+    entt::registry& registry = scene.registry();
+    const UIRect rect = registry.get<UIRect>(e);
+    const UITint* tinted = registry.try_get<UITint>(e);
+    const glm::vec4 tint = tinted ? tinted->color : glm::vec4(1.0f);
     if (const UIImage* image = registry.try_get<UIImage>(e))
-        drawImage(*image, rect);
+        drawImage(*image, rect, tint);
     if (const UIShape* shape = registry.try_get<UIShape>(e))
-        drawShape(*shape, rect);
+        drawShape(*shape, rect, tint);
+    if (const UIText* text = registry.try_get<UIText>(e))
+        drawText(scene, e, *text, rect, tint);
     scene.forEachChild(e, [&](entt::entity child) {
         if (!registry.all_of<Disabled>(child) && registry.all_of<RectTransform, UIRect>(child))
             drawElement(scene, child);
     });
 }
 
-void UIRenderer::drawShape(const UIShape& shape, const UIRect& rect)
+void UIRenderer::drawText(Scene& scene, entt::entity e, const UIText& text, const UIRect& rect, const glm::vec4& tint)
+{
+    Font* font = m_assets ? m_assets->font(text.font) : nullptr;
+    if (!font || text.text.empty())
+        return;
+    UITextLayout& layout = scene.registry().get_or_emplace<UITextLayout>(e);
+    const glm::vec2 min = glm::min(rect.min, rect.max);
+    layoutText(layout, text, *font, glm::abs(rect.max - rect.min));
+    if (layout.quads.empty())
+        return;
+    const GLuint texture = font->texture();  // after layout, which may have baked glyphs
+    const glm::vec2 atlas = font->atlasSize();
+    const std::uint32_t color = packColor(text.color * tint);
+    std::vector<Vertex>& vertices = m_textVertices;
+    vertices.clear();
+    for (const UITextLayout::Quad& q : layout.quads) {
+        const glm::vec2 local[4] = {min + q.min, min + glm::vec2(q.max.x, q.min.y), min + q.max, min + glm::vec2(q.min.x, q.max.y)};
+        const glm::vec2 uv[4] = {q.atlasMin / atlas, glm::vec2(q.atlasMax.x, q.atlasMin.y) / atlas, q.atlasMax / atlas,
+                                 glm::vec2(q.atlasMin.x, q.atlasMax.y) / atlas};
+        Vertex corners[4];
+        for (int i = 0; i < 4; ++i) {
+            const glm::vec3 p = rect.toScreen * glm::vec3(local[i], 1.0f);
+            corners[i] = {glm::vec2(p), uv[i], color, 0u, glm::vec4(0.0f), Text};
+        }
+        vertices.insert(vertices.end(), {corners[0], corners[1], corners[2], corners[0], corners[2], corners[3]});
+    }
+    addTriangles(texture, vertices.data(), vertices.size());
+}
+
+void UIRenderer::drawShape(const UIShape& shape, const UIRect& rect, const glm::vec4& tint)
 {
     const glm::vec2 centre = (rect.min + rect.max) * 0.5f;
     glm::vec2 half = glm::abs(rect.max - rect.min) * 0.5f;
@@ -144,8 +186,8 @@ void UIRenderer::drawShape(const UIShape& shape, const UIRect& rect)
     const glm::vec2 extent = half + 1.0f / pixels;  // room for one pixel of antialiasing
     const float border = std::clamp(shape.borderWidth, 0.0f, std::min(half.x, half.y));
     const glm::vec4 params(half, radius, border);
-    const std::uint32_t color = packColor(shape.color);
-    const std::uint32_t borderColor = packColor(shape.borderColor);
+    const std::uint32_t color = packColor(shape.color * tint);
+    const std::uint32_t borderColor = packColor(shape.borderColor * tint);
 
     const glm::vec2 offsets[4] = {{-extent.x, -extent.y}, {extent.x, -extent.y}, {extent.x, extent.y}, {-extent.x, extent.y}};
     Vertex corners[4];
@@ -180,10 +222,10 @@ static glm::vec2 squareEdge(float angle)
     return d / std::max(std::abs(d.x), std::abs(d.y));
 }
 
-void UIRenderer::drawImage(const UIImage& image, const UIRect& rect)
+void UIRenderer::drawImage(const UIImage& image, const UIRect& rect, const glm::vec4& tint)
 {
     const GLuint texture = image.texture != InvalidTexture ? image.texture : m_white;
-    const std::uint32_t color = packColor(image.color);
+    const std::uint32_t color = packColor(image.color * tint);
     glm::vec2 min = glm::min(rect.min, rect.max), max = glm::max(rect.min, rect.max);
     const glm::vec2 textureSize = image.texture != InvalidTexture ? image.textureSize : glm::vec2(0.0f);
 
@@ -269,6 +311,8 @@ void UIRenderer::drawImage(const UIImage& image, const UIRect& rect)
 void UIRenderer::end(const RenderTarget* target, int width, int height)
 {
     m_stats = {m_vertices.size(), m_batches.size()};
+    m_frame.vertices += m_stats.vertices;
+    m_frame.batches += m_stats.batches;
     if (m_vertices.empty() || width <= 0 || height <= 0)
         return;
     if (target && !target->valid())

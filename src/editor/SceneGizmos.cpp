@@ -223,6 +223,16 @@ void SceneGizmos::draw(ImDrawList* drawList, const Scene& scene, const Selection
             drawFrustum(painter, world, *camera, view.gameAspect);
         if (const SkinnedMeshRenderer* skinned = registry.try_get<SkinnedMeshRenderer>(e))
             drawSkeleton(painter, world, *skinned);
+        if (const SpriteRenderer* sprite = registry.try_get<SpriteRenderer>(e); sprite && sprite->drawnSize != glm::vec2(0.0f)) {
+            const glm::vec3 x = glm::vec3(world[0]) * (sprite->drawnSize.x * 0.5f);
+            const glm::vec3 y = glm::vec3(world[1]) * (sprite->drawnSize.y * 0.5f);
+            const glm::vec3 c(world[3]);
+            const ImU32 color = IM_COL32(120, 200, 255, 220);
+            painter.line(c - x - y, c + x - y, color);
+            painter.line(c + x - y, c + x + y, color);
+            painter.line(c + x + y, c - x + y, color);
+            painter.line(c - x + y, c - x - y, color);
+        }
     }
 
     const float radius = iconRadius();

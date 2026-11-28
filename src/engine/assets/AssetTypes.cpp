@@ -30,6 +30,8 @@ AssetKind assetKindOf(std::string_view path)
         return AssetKind::Pose;
     if (ext == "cpp" || ext == "h" || ext == "hpp" || ext == "cc" || ext == "c")
         return AssetKind::Script;
+    if (ext == "ttf" || ext == "otf")
+        return AssetKind::Font;
     if (ext == "vert" || ext == "frag" || ext == "glsl" || ext == "comp" || ext == "geom")
         return AssetKind::Shader;
     return AssetKind::Other;
@@ -49,6 +51,7 @@ const char* assetKindName(AssetKind kind)
     case AssetKind::Pose:     return "Pose";
     case AssetKind::Script:   return "Script";
     case AssetKind::Shader:   return "Shader";
+    case AssetKind::Font:     return "Font";
     case AssetKind::Other:    return "File";
     }
     return "File";

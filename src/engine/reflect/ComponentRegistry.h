@@ -50,6 +50,7 @@ struct FieldInfo
     AssetKind asset = AssetKind::None;  // String fields: a reference to an asset of this kind
     bool color = false;                 // Vec3/Vec4 fields: edited with a color picker
     bool joint = false;                 // String fields: a joint name of the parent's skeleton
+    bool multiline = false;             // String fields: edited in a multi-line box
     std::vector<std::string> options{}; // Enum fields: the name of each value, from 0
 };
 
@@ -80,6 +81,10 @@ struct MemberTraits<Value Class::*>
     using ValueType = Value;
 };
 
+// entt::entity is an enum too, but it's a reference, not a choice
+template<typename T>
+constexpr bool isEnumField = std::is_enum_v<T> && !std::is_same_v<T, entt::entity>;
+
 template<typename T>
 constexpr FieldType fieldTypeOf()
 {
@@ -101,7 +106,7 @@ constexpr FieldType fieldTypeOf()
         return FieldType::Vec2;
     else if constexpr (std::is_same_v<T, glm::vec4>)
         return FieldType::Vec4;
-    else if constexpr (std::is_enum_v<T>)
+    else if constexpr (isEnumField<T>)
         return FieldType::Enum;
     else
         static_assert(!sizeof(T*), "unsupported field type");
@@ -129,7 +134,7 @@ struct ComponentInfo
     {
         using Class = typename detail::MemberTraits<decltype(Member)>::ClassType;
         using Value = typename detail::MemberTraits<decltype(Member)>::ValueType;
-        if constexpr (std::is_enum_v<Value>) {
+        if constexpr (detail::isEnumField<Value>) {
             fields.push_back(
                 {key, label, FieldType::Enum,
                  [](const void* c) -> FieldValue { return static_cast<int>(static_cast<const Class*>(c)->*Member); },
@@ -182,6 +187,11 @@ struct ComponentInfo
     ComponentInfo& joint()
     {
         fields.back().joint = true;
+        return *this;
+    }
+    ComponentInfo& multiline()
+    {
+        fields.back().multiline = true;
         return *this;
     }
     // Names the values of an enum or int field, which then saves and edits as an Enum

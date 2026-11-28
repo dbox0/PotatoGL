@@ -49,12 +49,17 @@ constexpr KindInfo Kinds[] = {
     {CreateKind::UIPanel, "Panel", nullptr},
     {CreateKind::UIShape, "Shape", nullptr},
     {CreateKind::UIImage, "Image", nullptr},
+    {CreateKind::UIText, "Text", nullptr},
+    {CreateKind::UIButton, "Button", nullptr},
+    {CreateKind::UISlider, "Slider", nullptr},
+    {CreateKind::UIHealthBar, "Health Bar", nullptr},
 };
+
+constexpr const char* HealthBarPrefab = "assets/UI/HealthBar.prefab";
 
 bool isUiKind(CreateKind kind)
 {
-    return kind == CreateKind::UICanvas || kind == CreateKind::UIPanel || kind == CreateKind::UIShape ||
-           kind == CreateKind::UIImage;
+    return kind >= CreateKind::UICanvas && kind <= CreateKind::UIHealthBar;
 }
 
 const KindInfo& kindInfo(CreateKind kind)
@@ -174,8 +179,11 @@ void SceneActions::drawCreateItems(entt::entity parent)
     }
     item(CreateKind::Camera);
     if (ImGui::BeginMenu("UI")) {
-        for (const CreateKind kind : {CreateKind::UICanvas, CreateKind::UIPanel, CreateKind::UIShape, CreateKind::UIImage})
+        for (const CreateKind kind : {CreateKind::UICanvas, CreateKind::UIPanel, CreateKind::UIShape, CreateKind::UIImage,
+                                      CreateKind::UIText, CreateKind::UIButton, CreateKind::UISlider})
             item(kind);
+        ImGui::Separator();
+        item(CreateKind::UIHealthBar);
         ImGui::EndMenu();
     }
 }
@@ -231,6 +239,7 @@ void SceneActions::applyCreateUi(EditContext& context, EditHistory& history, Sel
     Scene& scene = context.scene;
     entt::registry& registry = scene.registry();
     const KindInfo& info = kindInfo(request.kind);
+    m_createdUi = true;
     entt::entity created = entt::null;
     entt::entity parent = entt::null;
     if (request.kind != CreateKind::UICanvas) {
@@ -253,8 +262,28 @@ void SceneActions::applyCreateUi(EditContext& context, EditHistory& history, Sel
         }
     }
 
+    if (request.kind == CreateKind::UIHealthBar) {
+        const entt::entity bar = instantiatePrefab(scene, context.components, HealthBarPrefab, parent);
+        if (bar == entt::null) {
+            if (created != entt::null)
+                scene.destroyRecursive(created);
+            return;
+        }
+        history.push(createdEntityCommand(scene, created != entt::null ? created : bar));
+        selection.set(bar);
+        return;
+    }
+
     const entt::entity e = scene.createGameObject(info.name, parent);
     RectTransform& rt = registry.emplace<RectTransform>(e);
+    const auto child = [&](const char* name, glm::vec2 anchorMin, glm::vec2 anchorMax, glm::vec2 sizeDelta) {
+        const entt::entity c = scene.createGameObject(name, e);
+        RectTransform& crt = registry.emplace<RectTransform>(c);
+        crt.anchorMin = anchorMin;
+        crt.anchorMax = anchorMax;
+        crt.sizeDelta = sizeDelta;
+        return c;
+    };
     switch (request.kind) {
     case CreateKind::UIPanel:
         rt.anchorMin = glm::vec2(0.0f);
@@ -268,6 +297,47 @@ void SceneActions::applyCreateUi(EditContext& context, EditHistory& history, Sel
     case CreateKind::UIImage:
         registry.emplace<UIImage>(e);
         break;
+    case CreateKind::UIText: {
+        rt.sizeDelta = {240.0f, 50.0f};
+        UIText& text = registry.emplace<UIText>(e);
+        text.text = "New Text";
+        break;
+    }
+    case CreateKind::UIButton: {
+        rt.sizeDelta = {160.0f, 40.0f};
+        UIShape& shape = registry.emplace<UIShape>(e);
+        shape.shape = UIShapeType::RoundedRect;
+        shape.cornerRadius = 6.0f;
+        registry.emplace<UIButton>(e);
+        const entt::entity label = child("Text", glm::vec2(0.0f), glm::vec2(1.0f), glm::vec2(0.0f));
+        UIText& text = registry.emplace<UIText>(label);
+        text.text = "Button";
+        text.fontSize = 24.0f;
+        text.color = {0.12f, 0.12f, 0.14f, 1.0f};
+        text.alignH = TextAlignH::Center;
+        text.alignV = TextAlignV::Middle;
+        text.wrap = false;
+        break;
+    }
+    case CreateKind::UISlider: {
+        rt.sizeDelta = {240.0f, 20.0f};
+        UISlider& slider = registry.emplace<UISlider>(e);
+        const entt::entity background = child("Background", glm::vec2(0.0f), glm::vec2(1.0f), {0.0f, -8.0f});
+        UIShape& track = registry.emplace<UIShape>(background);
+        track.shape = UIShapeType::RoundedRect;
+        track.cornerRadius = 6.0f;
+        track.color = {0.25f, 0.25f, 0.28f, 1.0f};
+        const entt::entity fill = child("Fill", glm::vec2(0.0f), {0.5f, 1.0f}, {0.0f, -8.0f});
+        UIShape& bar = registry.emplace<UIShape>(fill);
+        bar.shape = UIShapeType::RoundedRect;
+        bar.cornerRadius = 6.0f;
+        bar.color = {0.25f, 0.55f, 0.95f, 1.0f};
+        const entt::entity handle = child("Handle", {0.5f, 0.0f}, {0.5f, 1.0f}, {20.0f, 4.0f});
+        registry.emplace<UIShape>(handle).shape = UIShapeType::Circle;
+        slider.fill = fill;
+        slider.handle = handle;
+        break;
+    }
     default:
         break;
     }

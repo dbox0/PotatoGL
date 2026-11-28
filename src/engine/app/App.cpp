@@ -91,6 +91,7 @@ bool App::init(const char* title, int width, int height)
     m_ui = UIRenderer::create();
     if (!m_ui)
         return false;
+    m_ui->setAssets(&m_assets);
     if (m_overlay && !m_overlay->init(m_window, m_context)) {
         std::fprintf(stderr, "Failed to init overlay\n");
         return false;
@@ -105,7 +106,7 @@ bool App::init(const char* title, int width, int height)
     if (m_overlay)
         m_controller.setLookButtons(SDL_BUTTON_RMASK);  // left click belongs to picking and gizmos
     m_scene.registry().ctx().emplace<Input>();
-    m_scene.registry().ctx().emplace<EventBus>();
+    m_uiBars.attach(m_scene, m_scene.registry().ctx().emplace<EventBus>());
     registerSceneComponents(m_components);
     registerUiComponents(m_components);
     if (m_game && !m_game->init(gameContext()))
@@ -165,6 +166,7 @@ void App::syncRenderInstances(Scene& scene)
                               info->meta.pixelsPerUnit;
         draw.uv = glm::vec4(sprite.flipX ? 1.0f : 0.0f, sprite.flipY ? 1.0f : 0.0f, sprite.flipX ? 0.0f : 1.0f,
                             sprite.flipY ? 0.0f : 1.0f);
+        sprite.drawnSize = draw.size;
         draw.color = sprite.color;
         draw.sortOrder = sprite.sortOrder;
         draw.lit = sprite.lit;
@@ -279,6 +281,20 @@ void App::updateInput()
     m_scene.registry().ctx().get<Input>().update(!m_overlay || m_overlay->gameInput(), mouse, position);
 }
 
+// The size the game is shown at, in pixels: the Game view's image in the editor, else the window
+bool App::gameViewSize(glm::vec2& size) const
+{
+    if (m_overlay && m_overlay->visible()) {
+        float x, y, w, h;
+        if (!m_overlay->gameViewRect(x, y, w, h))
+            return false;
+        size = glm::floor(glm::vec2(w, h) * SDL_GetWindowPixelDensity(m_window));
+    } else {
+        size = glm::vec2(static_cast<float>(m_fbWidth), static_cast<float>(m_fbHeight));
+    }
+    return size.x > 0.0f && size.y > 0.0f;
+}
+
 void App::onResize(int width, int height)
 {
     if (width <= 0 || height <= 0)
@@ -317,6 +333,7 @@ void App::run()
         lastTicks = now;
         GpuProfiler& profiler = m_renderer->profiler();
         profiler.beginFrame();
+        m_ui->beginFrame();
 
         SDL_Event event;
         while (SDL_PollEvent(&event))
@@ -338,9 +355,19 @@ void App::run()
             m_assets.pollTextureChanges();
         }
 
+        // UI input first, so gameplay sees pointerOverUi for this frame's clicks
+        Input& input = m_scene.registry().ctx().get<Input>();
+        uiSliderVisualSystem(m_scene);
+        input.pointerOverUi = false;
+        if (glm::vec2 size; m_playMode == PlayMode::Play && gameViewSize(size)) {
+            uiLayoutSystem(m_scene, size);
+            uiInputSystem(m_scene, input, dt);
+        }
         if (m_game && m_playMode == PlayMode::Play)
             m_game->update(gameContext(), dt);
         m_scene.registry().ctx().get<EventBus>().flush();
+        if (m_playMode != PlayMode::Paused)
+            m_uiBars.update(m_scene, dt, m_playMode == PlayMode::Play);
 
         Scene& scene = activeScene();
         updateAnimators(scene, dt);
